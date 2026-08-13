@@ -1,0 +1,59 @@
+{
+  "name": "@arcadialin/widi",
+  "version": "0.1.0",
+  "description": "WIDI is a terminal coding harness based on the pi-agent-core",
+  "type": "module",
+  "bin": {
+    "widi-harness": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArcadiaLin/widi.git",
+    "directory": "apps/widi"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "tui",
+    "coding-agent"
+  ],
+  "scripts": {
+    "clean": "shx rm -rf dist",
+    "build": "npm run build:deps && npm run build:app",
+    "prepublishOnly": "npm run build",
+    "build:app": "tsgo -p tsconfig.build.json",
+    "build:deps": "tsgo -p ../../packages/agent/tsconfig.build.json",
+    "check": "tsgo --noEmit -p tsconfig.json",
+    "test": "vitest --run",
+    "cli": "tsx --tsconfig tsconfig.json src/cli.ts",
+    "tui": "tsx --tsconfig tsconfig.json src/cli.ts --cwd \"$INIT_CWD\" --agent-dir \"$npm_config_local_prefix/.widi\" --profile widi-dev"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-tui": "0.84.1",
+    "@silvia-odwyer/photon-node": "^0.3.4",
+    "@arcadialin/agent-core": "0.83.0",
+    "diff": "8.0.4",
+    "jiti": "^2.7.0",
+    "typebox": "1.3.7",
+    "undici": "8.5.0",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@codspeed/vitest-plugin": "^5.7.1",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.23.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

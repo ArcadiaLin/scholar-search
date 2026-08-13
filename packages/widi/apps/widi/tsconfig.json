@@ -1,0 +1,13 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"paths": {
+			"@arcadialin/agent-core": ["../../packages/agent/src/index.ts"],
+			"@arcadialin/agent-core/node": ["../../packages/agent/src/node.ts"],
+			"@arcadialin/agent-core/*": ["../../packages/agent/src/*.ts"]
+		}
+	},
+	"include": ["src/**/*.ts", "tests/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,64 @@
+{
+	"name": "@arcadialin/agent-core",
+	"version": "0.83.0",
+	"description": "WIDI agent core, forked from @earendil-works/pi-agent-core. The version tracks the upstream release this fork is based on.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./node": {
+			"types": "./dist/node.d.ts",
+			"import": "./dist/node.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"prepublishOnly": "npm run build",
+		"check": "tsgo --noEmit -p tsconfig.build.json",
+		"test": "vitest --run",
+		"test:harness": "vitest --run --config vitest.harness.config.ts",
+		"coverage:harness": "vitest --run --config vitest.harness.config.ts --coverage"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "0.83.0",
+		"diff": "8.0.4",
+		"ignore": "7.0.5",
+		"typebox": "1.3.7",
+		"yaml": "2.9.0"
+	},
+	"keywords": [
+		"ai",
+		"agent",
+		"llm",
+		"transport",
+		"state-management"
+	],
+	"files": [
+		"dist"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ArcadiaLin/widi.git",
+		"directory": "packages/agent"
+	},
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "24.12.4",
+		"@vitest/coverage-v8": "4.1.9",
+		"typescript": "5.9.3",
+		"vitest": "4.1.9"
+	}
+}
