@@ -48,6 +48,23 @@ WIDI extension 只能依赖 `apps/widi/src/core/extension/api.ts` 及其明确�
 
 只有出现真实复用点时才抽象公共模块。禁止预建无调用方的框架、兼容层或占位接口。
 
+### 3.3 RPC and Benchmark Boundary
+
+WIDI RPC 是自动化评测、批量实验和无头集成的标准运行边界。Benchmark runner 必须通过 RPC 驱动 WIDI Scholar，不得抓取 TUI 文本、解析终端控制序列或直接读取内部 session 文件。
+
+RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和赛题指标仍属于 `.widi-scholar/` 或领域模块。不得把 Scholar 专用命令、数据集规则或评分逻辑写入 WIDI RPC。
+
+当固定 Benchmark 最小复现表明现有公开 RPC 无法可靠表达以下通用能力时，允许直接修改 `packages/widi/apps/widi/src/rpc/` 及必要的相邻 Core API，不要求先用 extension 绕过：
+
+- 请求关联、结构化结果和错误分类；
+- agent 创建、隔离、重置、等待、取消、超时和干净退出；
+- 多 Agent 事件顺序、并发与背压；
+- Token、费用、模型调用、工具/API 调用、缓存和延迟等可观测数据；
+- Profile、模型、extension 和预算等生效配置的机器可读快照；
+- 协议版本、能力发现、输入校验和客户端兼容性。
+
+修改前必须先固定 RPC client 契约和失败复现。协议破坏性变更必须提升 `RPC_PROTOCOL_VERSION` 并同步迁移全部调用方；不得保留未迁移的旧路径。修改至少覆盖类型、运行时分派、公开协议文档，以及真实子进程级集成测试；测试必须包含 stdout JSONL 纯净性、stderr 诊断、启动期 human request、成功与失败 prompt、超时/abort、shutdown、结构化 extension event 和 usage/cost 传播。
+
 ## 4. Dependency and Runtime Rules
 
 ### Python
@@ -110,6 +127,8 @@ WIDI extension 只能依赖 `apps/widi/src/core/extension/api.ts` 及其明确�
 - 公开集用于开发，隐藏集不得用于 prompt、阈值或排序权重调优。
 - 评测至少报告 Precision、Recall、F1、端到端延迟、API 调用数和 Token；关系图等结构化输出另做契约检查。
 - 缓存命中与冷启动结果分开报告。失败请求不得静默排除，必须进入分母或单独说明口径。
+- 正式自动评测使用版本化 RPC client 通过 `npm run widi:rpc` 执行；每次运行记录 RPC protocol version、WIDI revision、Profile、模型、extension 版本和生效预算。
+- 每个样本必须有稳定关联 ID、独立终止状态和机器可读结果；保存原始 RPC 事件与聚合指标，使输出、失败和成本都可复核。
 
 ## 6. Development Workflow
 
