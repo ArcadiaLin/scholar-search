@@ -15,6 +15,20 @@
 # Generated experiment output. Keep experiment code and configs under experiments/ tracked.
 /runs/
 /results/
+
+# WIDI runtime state. Distribution config under .widi-scholar stays tracked.
+/.widi-scholar/auth.json
+/.widi-scholar/trust.json
+/.widi-scholar/runs/
+/.widi-scholar/*.lock
+
+# Node.js dependencies, build output, and profiling artifacts.
+node_modules/
+dist/
+coverage/
+.npm/
+*.tsbuildinfo
+*.cpuprofile
 /outputs/
 /artifacts/
 /experiments/**/runs/

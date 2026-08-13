@@ -1,0 +1,24 @@
+{
+	"name": "scholar-search",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "npm@11.11.0",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"scripts": {
+		"bootstrap": "npm --prefix packages/widi ci && uv sync --dev",
+		"build": "npm --prefix packages/widi run build",
+		"check": "npm run check:workspace && npm run check:widi && npm run check:python",
+		"check:workspace": "npm --prefix packages/widi exec -- biome check package.json scripts/run-widi.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
+		"check:widi": "npm --prefix packages/widi run check",
+		"check:python": "uv run ruff check . && uv run ruff format --check .",
+		"format": "npm run format:workspace && npm --prefix packages/widi run format && uv run ruff check --fix . && uv run ruff format .",
+		"format:workspace": "npm --prefix packages/widi exec -- biome check --write package.json scripts/run-widi.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
+		"test": "npm --prefix packages/widi run test",
+		"widi": "node scripts/run-widi.mjs",
+		"widi:dev": "node scripts/run-widi.mjs --dev",
+		"widi:rpc": "node scripts/run-widi.mjs --mode rpc"
+	}
+}

@@ -1,0 +1,35 @@
+[project]
+name = "scholar-search"
+version = "0.1.0"
+description = "Research and engineering workspace for complex academic paper search"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4,<10",
+    "ruff>=0.12,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+    ".widi-scholar",
+    "artifacts",
+    "data",
+    "papers",
+    "packages/widi",
+    "references",
+    "runs",
+]
+
+[tool.ruff.lint]
+select = ["B", "E4", "E7", "E9", "F", "I", "RUF", "UP"]

@@ -1,0 +1,24 @@
+schema_version: 1
+
+papers:
+  - id: arxiv:2501.10120
+    title: "PaSa: An LLM Agent for Comprehensive Academic Paper Search"
+    url: https://arxiv.org/abs/2501.10120
+    local_path: papers/2501.10120.pdf
+    sha256: b6d5d0fdd613e802faad83f79f3465063700b6d35fd7f1ef965203bd32d18fb2
+    purpose: PaSa architecture, training, benchmark, and cost-control reference
+
+repositories:
+  - id: widi
+    url: https://github.com/ArcadiaLin/widi.git
+    revision: b669ebd37de43d20e67605a1430ed9756446798a
+    imported_at: 2026-08-13
+    local_path: packages/widi
+    license: MIT
+    purpose: Multi-agent runtime, terminal application, and extension host
+    provenance: Local files matched this revision except for repository-specific changes recorded after import.
+    upstream_components:
+      - name: pi-agent-core
+        package: "@earendil-works/pi-agent-core"
+        base_version: 0.83.0
+        local_package: "@arcadialin/agent-core"
