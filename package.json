@@ -4,19 +4,19 @@
 	"private": true,
 	"type": "module",
 	"packageManager": "npm@11.11.0",
-	"engines": {
-		"node": ">=22.19.0"
-	},
+	"engines": { "node": ">=22.19.0" },
 	"scripts": {
-		"bootstrap": "npm --prefix packages/widi ci && uv sync --dev",
+		"bootstrap": "git submodule update --init --recursive && npm --prefix packages/widi ci && uv sync --dev",
 		"build": "npm --prefix packages/widi run build",
 		"check": "npm run check:workspace && npm run check:widi && npm run check:python",
-		"check:workspace": "npm --prefix packages/widi exec -- biome check package.json scripts/run-widi.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
-		"check:widi": "npm --prefix packages/widi run check",
+		"check:workspace": "npm --prefix packages/widi exec -- biome check --config-path packages/widi/biome.json package.json scripts/run-widi.mjs scripts/widi-quality.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
+		"check:widi": "node scripts/widi-quality.mjs check",
 		"check:python": "uv run ruff check . && uv run ruff format --check .",
-		"format": "npm run format:workspace && npm --prefix packages/widi run format && uv run ruff check --fix . && uv run ruff format .",
-		"format:workspace": "npm --prefix packages/widi exec -- biome check --write package.json scripts/run-widi.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
+		"format": "npm run format:workspace && npm run format:widi && uv run ruff check --fix . && uv run ruff format .",
+		"format:workspace": "npm --prefix packages/widi exec -- biome check --write --config-path packages/widi/biome.json package.json scripts/run-widi.mjs scripts/widi-quality.mjs .widi-scholar/settings.json .widi-scholar/agent/models.json .widi-scholar/themes/prism.json",
+		"format:widi": "node scripts/widi-quality.mjs format",
 		"test": "npm --prefix packages/widi run test",
+		"test:rpc": "npm --prefix packages/widi --workspace apps/widi run test -- tests/rpc",
 		"widi": "node scripts/run-widi.mjs",
 		"widi:dev": "node scripts/run-widi.mjs --dev",
 		"widi:rpc": "node scripts/run-widi.mjs --mode rpc"

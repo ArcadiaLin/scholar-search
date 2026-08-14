@@ -15,22 +15,18 @@ const forwardedArgs = sourceArgs.filter((argument) => argument !== "--dev");
 appendDefaultOption(forwardedArgs, "--cwd", repositoryRoot);
 appendDefaultOption(forwardedArgs, "--agent-dir", agentDir);
 appendDefaultOption(forwardedArgs, "--profile", "main");
+if (optionValue(forwardedArgs, "--mode") === "rpc") {
+	appendDefaultOption(forwardedArgs, "--human-timeout", "30000");
+}
 
 let command;
 let commandArgs;
 let cwd;
 
 if (dev) {
-	const tsxPath = join(
-		widiRoot,
-		"node_modules",
-		".bin",
-		process.platform === "win32" ? "tsx.cmd" : "tsx",
-	);
+	const tsxPath = join(widiRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
 	if (!existsSync(tsxPath)) {
-		process.stderr.write(
-			"WIDI dependencies are not installed. Run `npm run bootstrap` first.\n",
-		);
+		process.stderr.write("WIDI dependencies are not installed. Run `npm run bootstrap` first.\n");
 		process.exit(1);
 	}
 	command = tsxPath;
@@ -54,11 +50,7 @@ if (dev) {
 	cwd = repositoryRoot;
 }
 
-const child = spawn(command, commandArgs, {
-	cwd,
-	env: process.env,
-	stdio: "inherit",
-});
+const child = spawn(command, commandArgs, { cwd, env: process.env, stdio: "inherit" });
 
 child.on("error", (error) => {
 	process.stderr.write(`Failed to start WIDI: ${error.message}\n`);
@@ -71,4 +63,9 @@ child.on("exit", (code) => {
 
 function appendDefaultOption(args, option, value) {
 	if (!args.includes(option)) args.push(option, value);
+}
+
+function optionValue(args, option) {
+	const index = args.indexOf(option);
+	return index === -1 ? undefined : args[index + 1];
 }
