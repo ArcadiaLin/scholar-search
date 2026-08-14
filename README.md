@@ -15,6 +15,8 @@
 - [`packages/widi`](packages/widi) 是固定提交的 WIDI Git submodule，提供多 Agent 运行时、终端应用、extension API 和 Benchmark RPC。
 - [`.widi-scholar`](.widi-scholar) 是本项目的 WIDI Scholar 发布配置，承载 Profile、模型配置和后续 Scholar extensions。
 - [`references/sources.yaml`](references/sources.yaml) 记录论文、参考仓库、固定版本、许可证和本地路径。
+- [`benchmarks/sources.yaml`](benchmarks/sources.yaml) 是 Benchmark 数据来源、固定 revision、访问条件、下载 Profile 和本地路径的唯一入口。
+- [`benchmarks/protocol.md`](benchmarks/protocol.md) 记录评测任务、原生指标、Baseline 边界和公平比较约束。
 - `experiments/` 用于保存可复现实验代码和固定配置；大规模运行输出、论文、数据和参考仓库副本保持忽略。
 
 初始化并运行开发环境：
@@ -32,6 +34,43 @@ npm run widi:dev
 ```bash
 npm run widi:rpc
 ```
+
+## Benchmark 数据准备
+
+如需一键获取用于验证的 Benchmark，必须先提供有效的 Hugging Face 只读 Token。先在 PaSa、AstaBench 和 LitQA2 held-out 数据页面接受各自的访问条件，再将 Token 写入环境变量或被忽略的 `.env`：
+
+```bash
+cp .env.example .env
+# 在 .env 中填写 HF_TOKEN
+```
+
+所有命令统一通过 `uv` 运行。先检查机器可读清单并查看可用数据源：
+
+```bash
+uv run benchmarks/download.py check
+uv run benchmarks/download.py list
+```
+
+解析固定 revision、访问权限和待下载文件，但不写入数据：
+
+```bash
+uv run --env-file .env benchmarks/download.py download --all --dry-run
+```
+
+按每个数据源的默认 Benchmark Profile 下载完整评测所需文件：
+
+```bash
+uv run --env-file .env benchmarks/download.py download --all
+```
+
+只下载指定数据集，或获取包含训练数据、可选语料和完整套件的上游快照：
+
+```bash
+uv run --env-file .env benchmarks/download.py download pasa litsearch asta-bench
+uv run --env-file .env benchmarks/download.py download --all --profile full
+```
+
+数据写入已忽略的 `references/datasets/`，下载回执写入 `references/datasets/.receipts/`。赛事公开集需要参赛账号从赛事页面手工取得；隐藏集无法下载。全部数据源、Profile、固定 SHA、授权入口和人工步骤只在 [`benchmarks/sources.yaml`](benchmarks/sources.yaml) 维护。
 
 ## 研究与开发追溯
 

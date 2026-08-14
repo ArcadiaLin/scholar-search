@@ -1,0 +1,321 @@
+schema_version: 1
+updated_at: "2026-08-14"
+description: >-
+  Authoritative acquisition manifest for every benchmark dataset used by Scholar Search.
+  Revisions are immutable Hugging Face commit SHAs; downloaded data stays under ignored
+  references/datasets paths.
+
+credentials:
+  HF_TOKEN:
+    required_for_one_click_download: true
+    storage: environment variable or ignored .env file
+    purpose: Resolve public snapshots and access gated datasets after their terms are accepted.
+
+priority_order:
+  - competition-public
+  - pasa
+  - asta-bench
+  - sparbench
+  - litsearch
+  - litqa2-public
+  - litqa2-heldout
+
+sources:
+  - id: competition-public
+    name: Competition public evaluation set
+    priority: P0
+    benchmark_tasks:
+      - official-end-to-end-evaluation
+    local_dir: references/datasets/competition
+    source:
+      method: manual
+      url: https://www.chaspark.com/#/races/competitions/1264753432170905600
+    access:
+      level: authenticated-competition-account
+      hf_token_required: false
+      instructions:
+        - Log in to the competition page with the participating account.
+        - Download the public queries, output schema, and official scorer when released.
+        - Record the release date, filenames, SHA-256 values, split, and scorer version locally.
+    expected:
+      status: not-published-at-a-public-stable-url
+      hidden_split_downloadable: false
+
+  - id: competition-hidden
+    name: Competition hidden evaluation set
+    priority: P0
+    benchmark_tasks:
+      - official-hidden-evaluation
+    source:
+      method: unavailable
+      reason: The hidden split is available only to the official evaluation service.
+    access:
+      level: official-evaluator-only
+      hf_token_required: false
+
+  - id: pasa
+    name: PaSa AutoScholarQuery and RealScholarQuery
+    priority: P1
+    benchmark_tasks:
+      - AutoScholarQuery
+      - RealScholarQuery
+    local_dir: references/datasets/pasa
+    receipt: references/datasets/.receipts/pasa-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: CarlanLark/pasa-dataset
+      repo_type: dataset
+      revision: 232428b0c867268c3b8ded90db4d98c1b30501d6
+      url: https://huggingface.co/datasets/CarlanLark/pasa-dataset
+    access:
+      level: gated
+      hf_token_required: true
+      approval_url: https://huggingface.co/datasets/CarlanLark/pasa-dataset
+    default_profile: benchmark
+    profiles:
+      benchmark:
+        description: Evaluation queries only; excludes training data and the 2.5 GB paper archive.
+        include:
+          - AutoScholarQuery/test.jsonl
+          - RealScholarQuery/test.jsonl
+        exclude: []
+      full:
+        description: Complete PaSa dataset snapshot, including train/SFT data and paper database.
+        include: []
+        exclude: []
+    expected:
+      - path: AutoScholarQuery/test.jsonl
+        rows: 1000
+      - path: RealScholarQuery/test.jsonl
+        rows: 50
+      - path: AutoScholarQuery/train.jsonl
+        rows: 33551
+        profile: full
+      - path: AutoScholarQuery/dev.jsonl
+        rows: 1000
+        profile: full
+      - path: paper_database/cs_paper_2nd.zip
+        bytes: 2514939832
+        profile: full
+
+  - id: litsearch
+    name: LitSearch
+    priority: P2
+    benchmark_tasks:
+      - closed-corpus-retrieval
+      - retriever-reranker-regression
+    local_dir: references/datasets/litsearch
+    receipt: references/datasets/.receipts/litsearch-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: princeton-nlp/LitSearch
+      repo_type: dataset
+      revision: 9573fb284a1026c998df47024b888a163f0f0e25
+      url: https://huggingface.co/datasets/princeton-nlp/LitSearch
+    access:
+      level: public
+      hf_token_required: false
+    default_profile: benchmark
+    profiles:
+      queries:
+        description: Query set only, without a retrieval corpus.
+        include:
+          - query/*
+        exclude: []
+      benchmark:
+        description: Query set and the 64,183-document clean corpus used by current regression baselines.
+        include:
+          - query/*
+          - corpus_clean/*
+        exclude: []
+      full:
+        description: Complete snapshot, including the optional S2ORC-schema corpus.
+        include: []
+        exclude: []
+    expected:
+      - path: query/full-00000-of-00001.parquet
+        rows: 597
+      - pattern: corpus_clean/*.parquet
+        files: 6
+        rows: 64183
+      - pattern: corpus_s2orc/*.parquet
+        files: 8
+        profile: full
+
+  - id: asta-bench
+    name: AstaBench literature tasks and PaperFindingBench
+    priority: P1
+    benchmark_tasks:
+      - PaperFindingBench
+      - ScholarQABench2
+      - LitQA2-FullText
+      - LitQA2-FullText-Search
+      - ArxivDIGESTables-Clean
+    local_dir: references/datasets/asta-bench-v0.3.1
+    receipt: references/datasets/.receipts/asta-bench-v0.3.1-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: allenai/asta-bench
+      repo_type: dataset
+      revision: a600dc767f850385f4664772e3ba7a7f8be17d5e
+      url: https://huggingface.co/datasets/allenai/asta-bench
+    runtime:
+      repository: https://github.com/allenai/asta-bench.git
+      revision: 5c844b7451e3a98cd0df71ea626bb217803d2bed
+      tag: v0.3.1
+    access:
+      level: gated
+      hf_token_required: true
+      approval_url: https://huggingface.co/datasets/allenai/asta-bench
+      additional_runtime_credentials:
+        - ASTA_TOOL_KEY
+        - model-provider API key used by the selected solver and scorer
+    default_profile: literature
+    profiles:
+      paper-finding:
+        description: PaperFindingBench validation, test, and title-normalization data only.
+        include:
+          - tasks/paper_finder_bench/normalizer_reference.json
+          - tasks/paper_finder_bench/validation_2025_05.json
+          - tasks/paper_finder_bench/test_2025_05.json
+        exclude: []
+      literature:
+        description: All AstaBench v0.3.1 data needed by the literature-related tasks listed above.
+        include:
+          - tasks/paper_finder_bench/normalizer_reference.json
+          - tasks/paper_finder_bench/validation_2025_05.json
+          - tasks/paper_finder_bench/test_2025_05.json
+          - tasks/sqa/rubrics_v1_recomputed.json
+          - tasks/sqa/rubrics_v2_recomputed.json
+          - tasks/arxivdigestables/final_val_set.jsonl
+          - tasks/arxivdigestables/final_test_set.jsonl
+          - tasks/arxivdigestables/unrolled_tables.json
+          - tasks/labbench/litqa2_mapping.json
+        exclude: []
+      full:
+        description: Complete AstaBench v0.3.1 dataset snapshot for all suite tasks.
+        include: []
+        exclude: []
+    expected:
+      - path: tasks/paper_finder_bench/validation_2025_05.json
+        rows: 66
+      - path: tasks/paper_finder_bench/test_2025_05.json
+        rows: 267
+      - path: tasks/paper_finder_bench/normalizer_reference.json
+        entries: 535
+
+  - id: litqa2-public
+    name: LAB-Bench LitQA2 public split
+    priority: P3
+    benchmark_tasks:
+      - LitQA2
+      - LitQA2-FullText
+      - LitQA2-FullText-Search
+    local_dir: references/datasets/litqa2-public
+    receipt: references/datasets/.receipts/litqa2-public-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: futurehouse/lab-bench
+      repo_type: dataset
+      revision: 5c77cec648430f30611808808861eb86f81d5eaa
+      url: https://huggingface.co/datasets/futurehouse/lab-bench
+    access:
+      level: public
+      hf_token_required: false
+    license: CC-BY-SA-4.0
+    default_profile: benchmark
+    profiles:
+      benchmark:
+        description: Public LitQA2 split.
+        include:
+          - LitQA2/*
+        exclude: []
+      full:
+        description: All LitQA2 files available in the public LAB-Bench snapshot.
+        include:
+          - LitQA2/*
+        exclude: []
+    expected:
+      - path: LitQA2/train-00000-of-00001.parquet
+        rows: 199
+
+  - id: litqa2-heldout
+    name: LitQA2 held-out split
+    priority: P3
+    benchmark_tasks:
+      - LitQA2-held-out
+    local_dir: references/datasets/litqa2-heldout
+    receipt: references/datasets/.receipts/litqa2-heldout-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: futurehouse/aviary-paper-data
+      repo_type: dataset
+      revision: e9ee5486ac60f06f9e7f217ca167e2a83874ded4
+      url: https://huggingface.co/datasets/futurehouse/aviary-paper-data
+    access:
+      level: gated
+      hf_token_required: true
+      approval_url: https://huggingface.co/datasets/futurehouse/aviary-paper-data
+      restrictions:
+        - Do not use held-out questions for training, prompt tuning, or threshold selection.
+    license: CC-BY-SA-4.0
+    default_profile: benchmark
+    profiles:
+      benchmark:
+        description: Held-out LitQA2 test split.
+        include:
+          - LitQA2/*
+        exclude: []
+      full:
+        description: All LitQA2 held-out files available to the approved account.
+        include:
+          - LitQA2/*
+        exclude: []
+    expected:
+      - path: LitQA2/test-00000-of-00001.parquet
+        rows: 49
+
+  - id: sparbench
+    name: SPARBench
+    priority: P1
+    benchmark_tasks:
+      - cross-domain-open-paper-retrieval
+    local_dir: references/datasets/sparbench-hf
+    receipt: references/datasets/.receipts/sparbench-{profile}.json
+    source:
+      method: huggingface_snapshot
+      repo_id: XiaofengAlg/SPARBench
+      repo_type: dataset
+      revision: 98b95a3937de355fa78f773082d522afc9a70029
+      url: https://huggingface.co/datasets/XiaofengAlg/SPARBench
+    access:
+      level: public
+      hf_token_required: false
+    license: MIT
+    default_profile: benchmark
+    profiles:
+      benchmark:
+        description: SPARBench evaluation file.
+        include:
+          - train/SPAR_Benchmark.jsonl
+        exclude: []
+      full:
+        description: Complete SPARBench Hugging Face snapshot.
+        include: []
+        exclude: []
+    alternatives:
+      - method: git_files
+        repository: https://github.com/xiaofengShi/SPAR.git
+        revision: 468c651e99cfac69beb343b2ed9f418ddc38f873
+        files:
+          - source: benchmark/spar_bench.jsonl
+            destination: references/datasets/spar_bench.jsonl
+          - source: benchmark/AutoScholarQuery_test.jsonl
+            destination: references/datasets/AutoScholarQuery_test.jsonl
+        note: >-
+          The GitHub and Hugging Face releases contain the same 50 query intents and 556 gold papers,
+          but use different schemas. Do not silently mix their scorers or field mappings.
+    expected:
+      - path: train/SPAR_Benchmark.jsonl
+        rows: 50
+        gold_papers: 556

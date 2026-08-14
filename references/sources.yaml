@@ -4,9 +4,73 @@ papers:
   - id: arxiv:2501.10120
     title: "PaSa: An LLM Agent for Comprehensive Academic Paper Search"
     url: https://arxiv.org/abs/2501.10120
-    local_path: papers/2501.10120.pdf
+    local_path: papers/SYSTEM_PaSa__Comprehensive-Academic-Paper-Search__arXiv-2501.10120.pdf
     sha256: b6d5d0fdd613e802faad83f79f3465063700b6d35fd7f1ef965203bd32d18fb2
     purpose: PaSa architecture, training, benchmark, and cost-control reference
+
+  - id: arxiv:2407.18940
+    title: "LitSearch: A Retrieval Benchmark for Scientific Literature Search"
+    url: https://arxiv.org/abs/2407.18940
+    local_path: papers/BENCHMARK_LitSearch__Scientific-Literature-Retrieval__arXiv-2407.18940.pdf
+    sha256: 530166b697aecbbcb190816ab581cdd0c95f629b7bfaf6dce766c62cadeb57d9
+    purpose: LitSearch benchmark design and retriever/reranker baseline reference
+
+  - id: arxiv:2510.21652
+    title: "AstaBench: Rigorous Benchmarking of AI Agents with a Scientific Research Suite"
+    url: https://arxiv.org/abs/2510.21652
+    local_path: papers/BENCHMARK_AstaBench__Scientific-Research-Agent-Suite__arXiv-2510.21652.pdf
+    sha256: 5bf79b03472bfb22b7826c62206bd0dfafaa849920888210c1ae31c0eed2df33
+    purpose: AstaBench and PaperFindingBench evaluation protocol and baseline reference
+
+  - id: arxiv:2507.15245
+    title: "SPAR: Scholar Paper Retrieval with LLM-based Agents for Enhanced Academic Search"
+    url: https://arxiv.org/abs/2507.15245
+    local_path: papers/SYSTEM_SPAR__LLM-Agent-Scholar-Paper-Retrieval__arXiv-2507.15245.pdf
+    sha256: 85b37f4bcb68388664f9ed342115bd2329020f63bfbfc73a91a97a6dabcb9edc
+    purpose: SPAR architecture, SPARBench, and academic-search baseline reference
+
+  - id: arxiv:2409.13740
+    title: "Language agents achieve superhuman synthesis of scientific knowledge"
+    url: https://arxiv.org/abs/2409.13740
+    local_path: papers/SYSTEM_PaperQA2__Scientific-Literature-QA-Agent__arXiv-2409.13740.pdf
+    sha256: 7d45adf85d98a9a2f4e619f4f6c0e380c8ad842d678d50497ab5a20b6ae79f9c
+    purpose: PaperQA2 architecture, LitQA2 evaluation, and literature-QA baseline reference
+
+  - id: arxiv:2112.07899
+    title: "Large Dual Encoders Are Generalizable Retrievers"
+    url: https://arxiv.org/abs/2112.07899
+    local_path: papers/RETRIEVER_GTR__Generalizable-T5-Dense-Retriever__arXiv-2112.07899.pdf
+    sha256: 4e45cb8d02a6ecd93014c9be68aba6f0919897500eb3809106b981265e9b72c5
+    purpose: GTR-T5-large dense-retrieval baseline used by LitSearch
+
+  - id: arxiv:2212.09741
+    title: "One Embedder, Any Task: Instruction-Finetuned Text Embeddings"
+    url: https://arxiv.org/abs/2212.09741
+    local_path: papers/RETRIEVER_INSTRUCTOR__Instruction-Finetuned-Embeddings__arXiv-2212.09741.pdf
+    sha256: 1798a099eb91ff6531e926c266bf81ae1c628f9d26ac7d8866781890752afeeb
+    purpose: INSTRUCTOR-XL embedding baseline used by LitSearch
+
+  - id: arxiv:2212.03533
+    title: "Text Embeddings by Weakly-Supervised Contrastive Pre-training"
+    url: https://arxiv.org/abs/2212.03533
+    local_path: papers/RETRIEVER_E5__Weakly-Supervised-Text-Embeddings__arXiv-2212.03533.pdf
+    sha256: 2963a8af050d983f287edef210a525a69b7071847978451399ccaa3ac584be70
+    purpose: E5-large-v2 embedding baseline used by LitSearch
+
+  - id: arxiv:2402.09906
+    title: "Generative Representational Instruction Tuning"
+    url: https://arxiv.org/abs/2402.09906
+    local_path: papers/RETRIEVER_GritLM__Generative-Representational-Tuning__arXiv-2402.09906.pdf
+    sha256: 848c07da1f61d55e2e5d5ed15091850fd324d9587a383d3524b260309565ba00
+    purpose: GritLM-7B retriever baseline used by LitSearch
+
+  - id: doi:10.1561/1500000019
+    title: "The Probabilistic Relevance Framework: BM25 and Beyond"
+    url: https://doi.org/10.1561/1500000019
+    download_url: https://www.ccs.neu.edu/home/vip/teach/IRcourse/IR_surveys/robertson_foundations.pdf
+    local_path: papers/RETRIEVER_BM25__Probabilistic-Relevance-Framework__DOI-10.1561-1500000019.pdf
+    sha256: 11a9ef825dfd3fe50c8621273d02ea26b6f502b60379db9519d6c5c10de4fd25
+    purpose: BM25 probabilistic-retrieval foundation for the LitSearch sparse baseline
 
 repositories:
   - id: widi
