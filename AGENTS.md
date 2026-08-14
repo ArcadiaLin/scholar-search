@@ -12,7 +12,7 @@
 
 | 路径 | 职责 | 版本控制策略 |
 | --- | --- | --- |
-| `packages/widi/` | WIDI 完整源码快照及其独立 npm workspace | 源码、测试、文档和 lockfile 全部保留 |
+| `packages/widi/` | WIDI 上游 Git submodule 及其独立 npm workspace | 父仓库只锁定 gitlink；源码、测试、文档和 lockfile 在上游仓库维护 |
 | `packages/widi/packages/agent/` | 从 Pi 派生的单 Agent 内核 | 尽量保持上游形态，只接受明确的 fork 修复 |
 | `.widi-scholar/` | 本项目最终发布形态：settings、profiles、skills、prompts、themes、extensions | 配置和源码纳入 Git；认证、会话和运行状态忽略 |
 | `src/`、`tests/` | 独立于 WIDI 的 Python 领域逻辑和测试 | 纳入 Git |
@@ -21,6 +21,8 @@
 | `papers/`、`data/`、`runs/`、`artifacts/` | 本地材料、数据、运行记录和大文件 | 默认忽略，不作为源码依赖 |
 
 不要把 `packages/widi/` 当作普通第三方黑盒，也不要把它和赛题代码混在一起。WIDI 提供运行时和扩展 API；赛题能力属于 `.widi-scholar/` 或独立领域模块。
+
+`packages/widi/` 必须保持为可复现的固定提交。修改 WIDI 时，在 submodule 内创建提交并推送到 `ArcadiaLin/widi`，再由父仓库更新 gitlink；不得在父仓库留下未提交的 submodule 改动。正式实验期间禁止隐式跟随远端 HEAD，升级必须单独执行并重新验证。
 
 ## 3. Architecture Policy
 
@@ -75,6 +77,7 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 
 ### TypeScript / WIDI
 
+- 克隆父仓库后先运行 `git submodule update --init --recursive`；不得把 WIDI submodule 内容复制回父仓库追踪。
 - WIDI 使用 `packages/widi/package-lock.json` 和 npm；可复现安装使用 `npm ci`。
 - Node.js 必须满足 WIDI 的 `>=22.19.0` 要求。
 - 不得引入 pnpm、Yarn 或第二份 WIDI lockfile。
@@ -90,7 +93,7 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 
 | 命令 | 用途 |
 | --- | --- |
-| `npm run bootstrap` | 按 WIDI lockfile 安装 npm 依赖，并用 uv 同步 Python 开发环境 |
+| `npm run bootstrap` | 初始化固定版本的 WIDI submodule，按其 lockfile 安装 npm 依赖，并用 uv 同步 Python 开发环境 |
 | `npm run build` | 构建 WIDI agent core 和终端应用 |
 | `npm run widi:dev` | 从 TypeScript 源码启动，使用 `.widi-scholar/` 和当前仓库作为工作区 |
 | `npm run widi` | 从已构建的 `dist` 启动同一 Scholar 配置 |

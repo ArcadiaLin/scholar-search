@@ -11,12 +11,12 @@ papers:
 repositories:
   - id: widi
     url: https://github.com/ArcadiaLin/widi.git
-    revision: b669ebd37de43d20e67605a1430ed9756446798a
-    imported_at: 2026-08-13
+    revision: dd4c9ed601588b89113fc9fa04bf15ba3671db30
+    imported_at: 2026-08-14
     local_path: packages/widi
     license: MIT
-    purpose: Multi-agent runtime, terminal application, and extension host
-    provenance: Local files matched this revision except for repository-specific changes recorded after import.
+    purpose: Multi-agent runtime, terminal application, extension host, and benchmark RPC
+    provenance: Git submodule pinned by the parent repository; update only through an explicit gitlink bump.
     upstream_components:
       - name: pi-agent-core
         package: "@earendil-works/pi-agent-core"
