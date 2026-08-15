@@ -1,6 +1,6 @@
 {
 	"providers": {
-    "vllm": {
+		"vllm": {
 			"name": "vllm",
 			"baseUrl": "http://192.168.163.112:8003/v1",
 			"api": "openai-completions",
@@ -12,10 +12,7 @@
 					"reasoning": true,
 					"contextWindow": 262144,
 					"maxTokens": 32768,
-					"compat": {
-						"supportsDeveloperRole": false,
-						"thinkingFormat": "qwen-chat-template"
-					}
+					"compat": { "supportsDeveloperRole": false, "thinkingFormat": "qwen-chat-template" }
 				}
 			]
 		},

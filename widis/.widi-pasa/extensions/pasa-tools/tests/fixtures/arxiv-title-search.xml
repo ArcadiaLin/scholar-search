@@ -1,0 +1,53 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/cp1aTC8UOzf9OfzgSpan480RHn0</id>
+  <title>arXiv Query: search_query=ti:"Multivariate Time-series Anomaly Detection via Graph Attention Network"&amp;id_list=&amp;start=0&amp;max_results=5</title>
+  <updated>2026-08-15T09:42:53Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=ti:%22Multivariate+Time-series+Anomaly+Detection+via+Graph+Attention+Network%22&amp;start=0&amp;max_results=5&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>5</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2009.02040v1</id>
+    <title>Multivariate Time-series Anomaly Detection via Graph Attention Network</title>
+    <updated>2020-09-04T07:46:19Z</updated>
+    <link href="https://arxiv.org/abs/2009.02040v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2009.02040v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Anomaly detection on multivariate time-series is of great importance in both data mining research and industrial applications. Recent approaches have achieved significant progress in this topic, but there is remaining limitations. One major limitation is that they do not capture the relationships between different time-series explicitly, resulting in inevitable false alarms. In this paper, we propose a novel self-supervised framework for multivariate time-series anomaly detection to address this issue. Our framework considers each univariate time-series as an individual feature and includes two graph attention layers in parallel to learn the complex dependencies of multivariate time-series in both temporal and feature dimensions. In addition, our approach jointly optimizes a forecasting-based model and are construction-based model, obtaining better time-series representations through a combination of single-timestamp prediction and reconstruction of the entire time-series. We demonstrate the efficacy of our model through extensive experiments. The proposed method outperforms other state-of-the-art models on three real-world datasets. Further analysis shows that our method has good interpretability and is useful for anomaly diagnosis.</summary>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="stat.ML" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-09-04T07:46:19Z</published>
+    <arxiv:comment>Accepted by ICDM 2020. 10 pages</arxiv:comment>
+    <arxiv:primary_category term="cs.LG"/>
+    <author>
+      <name>Hang Zhao</name>
+    </author>
+    <author>
+      <name>Yujing Wang</name>
+    </author>
+    <author>
+      <name>Juanyong Duan</name>
+    </author>
+    <author>
+      <name>Congrui Huang</name>
+    </author>
+    <author>
+      <name>Defu Cao</name>
+    </author>
+    <author>
+      <name>Yunhai Tong</name>
+    </author>
+    <author>
+      <name>Bixiong Xu</name>
+    </author>
+    <author>
+      <name>Jing Bai</name>
+    </author>
+    <author>
+      <name>Jie Tong</name>
+    </author>
+    <author>
+      <name>Qi Zhang</name>
+    </author>
+  </entry>
+</feed>
