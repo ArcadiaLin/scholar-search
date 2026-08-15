@@ -12,23 +12,23 @@
 
 | 路径 | 职责 | 版本控制策略 |
 | --- | --- | --- |
-| `packages/widi/` | WIDI 上游 Git submodule 及其独立 npm workspace | 父仓库只锁定 gitlink；源码、测试、文档和 lockfile 在上游仓库维护 |
+| `packages/widi/` | 唯一固定提交的 WIDI 上游 Git submodule 及其独立 npm workspace | 父仓库只锁定一个 gitlink；源码、测试、文档和 lockfile 在上游仓库维护 |
 | `packages/widi/packages/agent/` | 从 Pi 派生的单 Agent 内核 | 尽量保持上游形态，只接受明确的 fork 修复 |
-| `.widi-scholar/` | 本项目最终发布形态：settings、profiles、skills、prompts、themes、extensions | 配置和源码纳入 Git；认证、会话和运行状态忽略 |
+| `widis/.widi-<namespace>/` | 按 namespace 管理的 WIDI Scholar 配置、profiles、skills、prompts、themes 和 extensions | 配置和源码纳入 Git；认证、会话和运行状态忽略 |
 | `src/`、`tests/` | 独立于 WIDI 的 Python 领域逻辑和测试 | 纳入 Git |
 | `experiments/` | 实验代码、固定配置、分析脚本 | 纳入 Git；运行输出放在被忽略的子目录 |
 | `references/` | 外部论文、仓库和数据集的来源记录 | 只提交清单；完整副本保持忽略 |
 | `papers/`、`data/`、`runs/`、`artifacts/` | 本地材料、数据、运行记录和大文件 | 默认忽略，不作为源码依赖 |
 
-不要把 `packages/widi/` 当作普通第三方黑盒，也不要把它和赛题代码混在一起。WIDI 提供运行时和扩展 API；赛题能力属于 `.widi-scholar/` 或独立领域模块。
+不要把 `packages/widi/` 当作普通第三方黑盒，也不要把它和赛题代码混在一起。WIDI 提供唯一运行时和扩展 API；不同 WIDI namespace 默认通过 `widis/.widi-<namespace>/` 的 profile、setting、model、prompt 和 extension 表达。
 
-`packages/widi/` 必须保持为可复现的固定提交。修改 WIDI 时，在 submodule 内创建提交并推送到 `ArcadiaLin/widi`，再由父仓库更新 gitlink；不得在父仓库留下未提交的 submodule 改动。正式实验期间禁止隐式跟随远端 HEAD，升级必须单独执行并重新验证。
+`packages/widi/` 必须保持为可复现的固定提交。修改 WIDI 时，在 submodule 内创建提交并推送到 `ArcadiaLin/widi`，再由父仓库更新唯一 gitlink；不得在父仓库留下未提交的 submodule 改动。正式实验期间禁止隐式跟随远端 HEAD，升级必须单独执行并重新验证。
 
 ## 3. Architecture Policy
 
 ### 3.1 Extension First
 
-学术查询解析、检索编排、候选筛选、排序、归纳和评测接入，默认实现为 `.widi-scholar/extensions/` 下的 WIDI extension。
+学术查询解析、检索编排、候选筛选、排序、归纳和评测接入，默认实现为对应 `widis/.widi-<namespace>/extensions/` 下的 WIDI extension。
 
 修改 `packages/widi/apps/widi/` 只允许两种情况：
 
@@ -52,9 +52,9 @@ WIDI extension 只能依赖 `apps/widi/src/core/extension/api.ts` 及其明确�
 
 ### 3.3 RPC and Benchmark Boundary
 
-WIDI RPC 是自动化评测、批量实验和无头集成的标准运行边界。Benchmark runner 必须通过 RPC 驱动 WIDI Scholar，不得抓取 TUI 文本、解析终端控制序列或直接读取内部 session 文件。
+WIDI RPC 是自动化评测、批量实验和无头集成的标准运行边界。Benchmark runner 必须通过 namespace 对应的 RPC 启动入口驱动 WIDI Scholar，不得抓取 TUI 文本、解析终端控制序列或直接读取内部 session 文件。
 
-RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和赛题指标仍属于 `.widi-scholar/` 或领域模块。不得把 Scholar 专用命令、数据集规则或评分逻辑写入 WIDI RPC。
+RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和赛题指标仍属于 `widis/.widi-<namespace>/` 或领域模块。不得把 Scholar 专用命令、数据集规则或评分逻辑写入 WIDI RPC。
 
 当固定 Benchmark 最小复现表明现有公开 RPC 无法可靠表达以下通用能力时，允许直接修改 `packages/widi/apps/widi/src/rpc/` 及必要的相邻 Core API，不要求先用 extension 绕过：
 
@@ -78,9 +78,9 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 ### TypeScript / WIDI
 
 - 克隆父仓库后先运行 `git submodule update --init --recursive`；不得把 WIDI submodule 内容复制回父仓库追踪。
-- WIDI 使用 `packages/widi/package-lock.json` 和 npm；可复现安装使用 `npm ci`。
+- WIDI runtime 只维护在 `packages/widi/`，使用其 `package-lock.json` 和 npm；可复现安装使用 `npm ci`。
 - Node.js 必须满足 WIDI 的 `>=22.19.0` 要求。
-- 不得引入 pnpm、Yarn 或第二份 WIDI lockfile。
+- 不得引入 pnpm、Yarn 或第二份 WIDI runtime/lockfile；namespace 配置不得复制 WIDI 源码或依赖。
 - `packages/widi/packages/agent/` 的版本跟随其 Pi 上游基线；不要顺手升级依赖或格式化整棵目录。
 
 ### Secrets and External Services
@@ -94,10 +94,13 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 | 命令 | 用途 |
 | --- | --- |
 | `npm run bootstrap` | 初始化固定版本的 WIDI submodule，按其 lockfile 安装 npm 依赖，并用 uv 同步 Python 开发环境 |
-| `npm run build` | 构建 WIDI agent core 和终端应用 |
-| `npm run widi:dev` | 从 TypeScript 源码启动，使用 `.widi-scholar/` 和当前仓库作为工作区 |
-| `npm run widi` | 从已构建的 `dist` 启动同一 Scholar 配置 |
-| `npm run widi:rpc` | 以 JSONL RPC 模式启动，供自动化集成 |
+| `npm run build` | 构建唯一 WIDI runtime 的 agent core 和终端应用 |
+| `npm run widi:dev` | 从 TypeScript 源码启动 Scholar namespace，使用 `widis/.widi-scholar/` 和当前仓库作为工作区 |
+| `npm run widi` | 从已构建的 `dist` 启动 Scholar namespace |
+| `npm run widi:rpc` | 以 Scholar namespace 的 JSONL RPC 模式启动，供自动化集成 |
+| `npm run widi:pasa:dev` | 从 TypeScript 源码启动 PASA namespace，使用 `widis/.widi-pasa/` |
+| `npm run widi:pasa` | 从已构建的 `dist` 启动 PASA namespace |
+| `npm run widi:pasa:rpc` | 以 PASA namespace 的 JSONL RPC 模式启动 |
 | `npm run check` | 运行 WIDI lint/typecheck 与 Python Ruff 检查，不修改文件 |
 | `npm test` | 运行 WIDI 两个 workspace 的测试 |
 
@@ -121,7 +124,7 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 - 配置必须显式包含模型/provider 版本、prompt 或策略版本、数据版本、随机种子、检索时间边界和预算。
 - 每次正式运行必须可追溯到代码版本与完整配置，并记录查询数、API 调用数、输入/输出 Token、墙钟时间、失败数和估算费用。
 - 原始响应、缓存、checkpoint 和逐样本大输出写入被忽略目录；可审阅的小型汇总可以纳入 Git。
-- 只有在固定评测上稳定优于基线、成本可接受且失败模式明确后，实验实现才能进入 `.widi-scholar/extensions/` 或 `src/`。
+- 只有在固定评测上稳定优于基线、成本可接受且失败模式明确后，实验实现才能进入对应的 `widis/.widi-<namespace>/extensions/` 或 `src/`。
 
 ### 5.3 Evaluation
 
@@ -130,14 +133,14 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 - 公开集用于开发，隐藏集不得用于 prompt、阈值或排序权重调优。
 - 评测至少报告 Precision、Recall、F1、端到端延迟、API 调用数和 Token；关系图等结构化输出另做契约检查。
 - 缓存命中与冷启动结果分开报告。失败请求不得静默排除，必须进入分母或单独说明口径。
-- 正式自动评测使用版本化 RPC client 通过 `npm run widi:rpc` 执行；每次运行记录 RPC protocol version、WIDI revision、Profile、模型、extension 版本和生效预算。
+- 正式自动评测使用版本化 RPC client 通过对应 namespace 的静默 RPC 启动命令（Scholar 使用 `npm run --silent widi:rpc`，PASA 使用 `npm run --silent widi:pasa:rpc`）；每次运行记录 namespace、RPC protocol version、WIDI revision、Profile、模型、extension 版本和生效预算。
 - 每个样本必须有稳定关联 ID、独立终止状态和机器可读结果；保存原始 RPC 事件与聚合指标，使输出、失败和成本都可复核。
 
 ## 6. Development Workflow
 
 1. 先读 `problem.md`、相关实现和测试，确认变更落在哪个边界。
 2. Bug 修复先构造最小复现；性能优化先记录基线；研究改动先固定实验配置。
-3. 优先修改 `.widi-scholar/`；触及 WIDI fork 时保持补丁最小，并补覆盖该差异的测试。
+3. 优先修改对应的 `widis/.widi-<namespace>/`；触及 WIDI fork 时保持补丁最小，并补覆盖该差异的测试。
 4. 运行最窄且能证明行为的检查，再运行受影响 workspace 的类型检查和测试。
 5. 将有效实验提升为正式实现时，迁移所有调用方并删除旧路径、临时开关和重复配置。
 6. 提交前确认没有凭据、大文件、运行缓存或未固定版本的外部副本。

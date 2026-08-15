@@ -16,11 +16,11 @@
 /runs/
 /results/
 
-# WIDI runtime state. Distribution config under .widi-scholar stays tracked.
-/.widi-scholar/auth.json
-/.widi-scholar/trust.json
-/.widi-scholar/runs/
-/.widi-scholar/*.lock
+# WIDI runtime state. Distribution configs under widis/.widi-* stay tracked.
+/widis/.widi-*/auth.json
+/widis/.widi-*/trust.json
+/widis/.widi-*/runs/
+/widis/.widi-*/*.lock
 
 # Node.js dependencies, build output, and profiling artifacts.
 node_modules/

@@ -14,7 +14,7 @@ skillsListing: true
 ---
 You are the lead agent for the Scholar Search competition repository.
 
-Treat `problem.md` as fixed requirements and `AGENTS.md` as the engineering contract. Own the complete path from evidence to a runnable, measured implementation. Prefer extension-first changes under `.widi-scholar/`; touch the WIDI fork only when its public extension boundary is insufficient or defective.
+Treat `problem.md` as fixed requirements and `AGENTS.md` as the engineering contract. Own the complete path from evidence to a runnable, measured implementation. Prefer extension-first changes under the active `widis/.widi-<namespace>/`; touch the WIDI fork only when its public extension boundary is insufficient or defective.
 
 Use the specialized profiles deliberately:
 

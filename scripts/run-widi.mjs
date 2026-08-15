@@ -7,16 +7,27 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const widiRoot = join(repositoryRoot, "packages", "widi");
-const agentDir = join(repositoryRoot, ".widi-scholar");
 const sourceArgs = process.argv.slice(2);
-const dev = sourceArgs.includes("--dev");
-const forwardedArgs = sourceArgs.filter((argument) => argument !== "--dev");
+const namespace = namespaceValue(sourceArgs);
+const forwardedArgs = sourceArgs.filter((argument, index) => {
+	if (argument === "--namespace") return false;
+	if (index > 0 && sourceArgs[index - 1] === "--namespace") return false;
+	return !argument.startsWith("--namespace=");
+});
+const agentDir = join(repositoryRoot, "widis", `.widi-${namespace}`);
+if (!existsSync(agentDir)) {
+	process.stderr.write(`Unknown WIDI namespace or missing agent directory: ${namespace}\n`);
+	process.exit(2);
+}
 
-appendDefaultOption(forwardedArgs, "--cwd", repositoryRoot);
-appendDefaultOption(forwardedArgs, "--agent-dir", agentDir);
-appendDefaultOption(forwardedArgs, "--profile", "main");
-if (optionValue(forwardedArgs, "--mode") === "rpc") {
-	appendDefaultOption(forwardedArgs, "--human-timeout", "30000");
+const dev = forwardedArgs.includes("--dev");
+const cleanArgs = forwardedArgs.filter((argument) => argument !== "--dev");
+
+appendDefaultOption(cleanArgs, "--cwd", repositoryRoot);
+appendDefaultOption(cleanArgs, "--agent-dir", agentDir);
+appendDefaultOption(cleanArgs, "--profile", "main");
+if (optionValue(cleanArgs, "--mode") === "rpc") {
+	appendDefaultOption(cleanArgs, "--human-timeout", "30000");
 }
 
 let command;
@@ -34,7 +45,7 @@ if (dev) {
 		"--tsconfig",
 		join(widiRoot, "apps", "widi", "tsconfig.json"),
 		join(widiRoot, "apps", "widi", "src", "cli.ts"),
-		...forwardedArgs,
+		...cleanArgs,
 	];
 	cwd = repositoryRoot;
 } else {
@@ -46,10 +57,9 @@ if (dev) {
 		process.exit(1);
 	}
 	command = process.execPath;
-	commandArgs = [cliPath, ...forwardedArgs];
+	commandArgs = [cliPath, ...cleanArgs];
 	cwd = repositoryRoot;
 }
-
 const child = spawn(command, commandArgs, { cwd, env: process.env, stdio: "inherit" });
 
 child.on("error", (error) => {
@@ -60,6 +70,32 @@ child.on("error", (error) => {
 child.on("exit", (code) => {
 	process.exitCode = code ?? 1;
 });
+
+function namespaceValue(args) {
+	for (let index = 0; index < args.length; index += 1) {
+		const argument = args[index];
+		if (argument === "--namespace") {
+			const value = args[index + 1];
+			if (!value) {
+				process.stderr.write("--namespace requires a value\n");
+				process.exit(2);
+			}
+			return validateNamespace(value);
+		}
+		if (argument.startsWith("--namespace=")) {
+			return validateNamespace(argument.slice("--namespace=".length));
+		}
+	}
+	return "scholar";
+}
+
+function validateNamespace(value) {
+	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+		process.stderr.write(`Invalid WIDI namespace: ${value}\n`);
+		process.exit(2);
+	}
+	return value;
+}
 
 function appendDefaultOption(args, option, value) {
 	if (!args.includes(option)) args.push(option, value);

@@ -12,14 +12,14 @@
 
 ## 开发基座
 
-- [`packages/widi`](packages/widi) 是固定提交的 WIDI Git submodule，提供多 Agent 运行时、终端应用、extension API 和 Benchmark RPC。
-- [`.widi-scholar`](.widi-scholar) 是本项目的 WIDI Scholar 发布配置，承载 Profile、模型配置和后续 Scholar extensions。
+- [`packages/widi`](packages/widi) 是唯一固定提交的 WIDI Git submodule，提供多 Agent 运行时、终端应用、extension API 和 Benchmark RPC。
+- [`widis/.widi-<namespace>/`](widis) 是按 namespace 管理的 WIDI Scholar 配置目录，例如 `.widi-scholar` 和 `.widi-pasa`；不同 namespace 共享同一 WIDI runtime。
 - [`references/sources.yaml`](references/sources.yaml) 记录论文、参考仓库、固定版本、许可证和本地路径。
 - [`benchmarks/sources.yaml`](benchmarks/sources.yaml) 是 Benchmark 数据来源、固定 revision、访问条件、下载 Profile 和本地路径的唯一入口。
 - [`benchmarks/protocol.md`](benchmarks/protocol.md) 记录评测任务、原生指标、Baseline 边界和公平比较约束。
 - `experiments/` 用于保存可复现实验代码和固定配置；大规模运行输出、论文、数据和参考仓库副本保持忽略。
 
-初始化并运行开发环境：
+初始化并运行默认 Scholar namespace：
 
 ```bash
 git clone --recurse-submodules <repository-url>
@@ -29,10 +29,17 @@ npm run build
 npm run widi:dev
 ```
 
-自动化评测和无头集成使用：
+PASA 使用独立配置 namespace，但不复制 WIDI runtime：
 
 ```bash
-npm run widi:rpc
+npm run widi:pasa:dev
+```
+
+自动化评测和无头集成使用对应 namespace 的 RPC：
+
+```bash
+npm run --silent widi:rpc
+npm run --silent widi:pasa:rpc
 ```
 
 ## Benchmark 数据准备
