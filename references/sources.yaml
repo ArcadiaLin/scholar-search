@@ -73,6 +73,26 @@ papers:
     purpose: BM25 probabilistic-retrieval foundation for the LitSearch sparse baseline
 
 repositories:
+  - id: pasa
+    url: https://github.com/bytedance/pasa.git
+    revision: 2aaa6a9b1e48d24a2b7e21e8551f863dad9eeb84
+    imported_at: 2026-08-15
+    local_path: references/repos/pasa
+    license: Apache-2.0
+    purpose: Official PaSa agent, search tools, prompts, and metrics used as the reproduction baseline
+    provenance: Read-only mirror. Code is migrated into project modules under Apache-2.0 with attribution; the clone itself is never edited or built in place.
+    external_requirements:
+      - name: transformers-fork
+        url: https://github.com/hyc2026/transformers.git
+        note: README requires this fork installed editable; the released checkpoints are not verified against upstream transformers.
+      - name: pasa-7b-crawler
+        url: https://huggingface.co/bytedance-research/pasa-7b-crawler
+      - name: pasa-7b-selector
+        url: https://huggingface.co/bytedance-research/pasa-7b-selector
+      - name: serper
+        url: https://google.serper.dev/search
+        credential: SERPER_API_KEY
+
   - id: widi
     url: https://github.com/ArcadiaLin/widi.git
     revision: dd4c9ed601588b89113fc9fa04bf15ba3671db30
