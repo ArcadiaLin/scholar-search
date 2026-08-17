@@ -1,0 +1,20 @@
+{
+  "query": "transformer language model pretraining",
+  "candidates": [
+    {
+      "paper_id": "p1",
+      "title": "Attention Is All You Need",
+      "abstract": "We propose the transformer, a model architecture based solely on attention mechanisms."
+    },
+    {
+      "paper_id": "p2",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+      "abstract": "We introduce a new language representation model called BERT, designed to pre-train deep bidirectional representations."
+    },
+    {
+      "paper_id": "p3",
+      "title": "Cooking for Beginners",
+      "abstract": "A guide to basic culinary techniques and recipes for home cooks."
+    }
+  ]
+}
