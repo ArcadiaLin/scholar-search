@@ -78,7 +78,10 @@ class BM25Ranker:
             scores = [0.0] * len(request.candidates)
 
         indexed_scores = list(enumerate(scores))
-        indexed_scores.sort(key=lambda x: (x[1], x[0]), reverse=True)
+        # Sort by score descending; on ties preserve the original candidate order
+        # (ascending index) so that equal-BM25 outputs remain deterministic and
+        # intuitive even with very small corpora.
+        indexed_scores.sort(key=lambda x: (-x[1], x[0]))
 
         sorted_scores = [score for _, score in indexed_scores]
         tiers = _assign_tiers(sorted_scores)
