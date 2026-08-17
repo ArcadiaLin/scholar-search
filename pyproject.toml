@@ -3,7 +3,9 @@ name = "scholar-search"
 version = "0.1.0"
 description = "Research and engineering workspace for complex academic paper search"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "metasci-universe",
+]
 
 [dependency-groups]
 dev = [
@@ -15,6 +17,14 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.uv.workspace]
+members = [
+    "packages/metasci-universe",
+]
+
+[tool.uv.sources]
+metasci-universe = { workspace = true, editable = true }
 
 [tool.pytest.ini_options]
 addopts = "-ra"
@@ -29,6 +39,7 @@ extend-exclude = [
     "artifacts",
     "data",
     "papers",
+    "packages/metasci-universe",
     "packages/widi",
     "references",
     "runs",
