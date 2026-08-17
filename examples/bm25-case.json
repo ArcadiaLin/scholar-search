@@ -1,0 +1,32 @@
+{
+  "query": "large language model reasoning",
+  "candidates": [
+    {
+      "paper_id": "cot",
+      "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",
+      "abstract": "We explore how generating a chain of thought before the final answer improves reasoning ability of large language models."
+    },
+    {
+      "paper_id": "instruct",
+      "title": "Training Language Models to Follow Instructions with Human Feedback",
+      "abstract": "We show that fine-tuning language models on user instructions improves their ability to follow instructions."
+    },
+    {
+      "paper_id": "bert",
+      "title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "abstract": "We introduce BERT, a new language representation model pre-trained on large unlabeled text."
+    },
+    {
+      "paper_id": "attention",
+      "title": "Attention Is All You Need",
+      "abstract": "We propose the transformer, a simple network architecture based solely on attention mechanisms."
+    },
+    {
+      "paper_id": "cooking",
+      "title": "Cooking for Beginners: Simple Recipes for Home Cooks",
+      "abstract": "A collection of easy recipes for people learning to cook at home."
+    }
+  ],
+  "strategy": "bm25",
+  "top_k": 5
+}
