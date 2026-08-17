@@ -8,33 +8,8 @@ from collections.abc import Callable
 from rank_bm25 import BM25Okapi
 
 from src.retriever.schema import PaperCandidate, RankedPaper, RankRequest, RankResponse
-from src.retriever.text import build_document
+from src.retriever.text import assign_tiers, build_document
 from src.retriever.tokenizer import tokenize
-
-
-def _assign_tiers(sorted_scores: list[float]) -> list[str]:
-    """Assign relevance tiers based on relative score ranking.
-
-    Only positive scores receive ``highly_relevant`` or ``partially_relevant``;
-    all zero or negative scores are ``not_relevant``.
-    """
-    n = len(sorted_scores)
-    if n == 0:
-        return []
-
-    tiers: list[str] = []
-    for rank_idx, score in enumerate(sorted_scores):
-        if score <= 0:
-            tiers.append("not_relevant")
-            continue
-        percentile = rank_idx / n
-        if percentile < 0.20:
-            tiers.append("highly_relevant")
-        elif percentile < 0.50:
-            tiers.append("partially_relevant")
-        else:
-            tiers.append("not_relevant")
-    return tiers
 
 
 class BM25Ranker:
@@ -84,7 +59,7 @@ class BM25Ranker:
         indexed_scores.sort(key=lambda x: (-x[1], x[0]))
 
         sorted_scores = [score for _, score in indexed_scores]
-        tiers = _assign_tiers(sorted_scores)
+        tiers = assign_tiers(sorted_scores)
 
         top_k = request.top_k if request.top_k is not None else len(request.candidates)
         ranked: list[RankedPaper] = []

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from src.retriever.provider import EmbeddingProviderError, EmbeddingTimeoutError
 from src.retriever.ranker import rank
 from src.retriever.schema import RankRequest
 
@@ -39,6 +40,12 @@ def cmd_rank() -> int:
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 3
+    except EmbeddingTimeoutError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 5
+    except EmbeddingProviderError as exc:
+        print(f"Error: embedding provider failure: {exc}", file=sys.stderr)
+        return 4
     except TimeoutError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 5

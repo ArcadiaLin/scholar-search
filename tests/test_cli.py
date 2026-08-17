@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from src.retriever.cli import cmd_rank
+from src.retriever.provider import EmbeddingProviderError
+
 
 @pytest.fixture
 def cli_cmd() -> list[str]:
@@ -44,11 +47,11 @@ def test_cli_invalid_json(cli_cmd: list[str]) -> None:
     assert result.stdout == ""
 
 
-def test_cli_unsupported_strategy(cli_cmd: list[str]) -> None:
+def test_cli_unknown_strategy(cli_cmd: list[str]) -> None:
     payload = {
         "query": "x",
         "candidates": [{"paper_id": "p1", "title": "X"}],
-        "strategy": "embedding",
+        "strategy": "unknown",
     }
     result = subprocess.run(
         cli_cmd,
@@ -57,5 +60,33 @@ def test_cli_unsupported_strategy(cli_cmd: list[str]) -> None:
         text=True,
         check=False,
     )
-    assert result.returncode == 3
+    assert result.returncode == 2
     assert result.stdout == ""
+
+
+def test_cli_embedding_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        "query": "x",
+        "candidates": [{"paper_id": "p1", "title": "X"}],
+        "strategy": "embedding",
+    }
+
+    def _failing_rank(_request: object) -> object:
+        raise EmbeddingProviderError("mock failure")
+
+    monkeypatch.setattr("src.retriever.cli.rank", _failing_rank)
+
+    import io
+
+    stdin = io.StringIO(json.dumps(payload))
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    monkeypatch.setattr("sys.stdin", stdin)
+    monkeypatch.setattr("sys.stdout", stdout)
+    monkeypatch.setattr("sys.stderr", stderr)
+
+    rc = cmd_rank()
+    assert rc == 4
+    assert stdout.getvalue() == ""
+    assert "embedding provider failure" in stderr.getvalue()

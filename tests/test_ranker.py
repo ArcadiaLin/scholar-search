@@ -15,6 +15,21 @@ def _load_fixture() -> dict:
     return json.loads(Path("tests/fixtures/candidates.json").read_text())
 
 
+class _MockEmbeddingProvider:
+    """Deterministic provider that returns one-hot vectors by text hash."""
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        return [self._vectorize(t) for t in texts]
+
+    def _vectorize(self, text: str) -> list[float]:
+        bucket = hash(text) % 3
+        if bucket == 0:
+            return [1.0, 0.0, 0.0]
+        if bucket == 1:
+            return [0.0, 1.0, 0.0]
+        return [0.0, 0.0, 1.0]
+
+
 def test_rank_bm25() -> None:
     payload = _load_fixture()
     request = RankRequest(
@@ -28,16 +43,44 @@ def test_rank_bm25() -> None:
     assert len(response.ranked) == 3
 
 
-@pytest.mark.parametrize("strategy", ["embedding", "hybrid"])
-def test_rank_unsupported_strategy(strategy: str) -> None:
+def test_rank_embedding() -> None:
     payload = _load_fixture()
     request = RankRequest(
         query=payload["query"],
         candidates=[PaperCandidate.model_validate(c) for c in payload["candidates"]],
-        strategy=strategy,  # type: ignore[arg-type]
+        strategy="embedding",  # type: ignore[arg-type]
     )
-    with pytest.raises(ValueError, match="not implemented yet"):
-        rank(request)
+    response = rank(request, embedding_provider=_MockEmbeddingProvider())
+
+    assert response.strategy == "embedding"
+    assert len(response.ranked) == 3
+
+
+def test_rank_hybrid() -> None:
+    payload = _load_fixture()
+    request = RankRequest(
+        query=payload["query"],
+        candidates=[PaperCandidate.model_validate(c) for c in payload["candidates"]],
+        strategy="hybrid",  # type: ignore[arg-type]
+    )
+    response = rank(request, embedding_provider=_MockEmbeddingProvider())
+
+    assert response.strategy == "hybrid"
+    assert len(response.ranked) == 3
+    assert response.source_counts == {"bm25": 3, "embedding": 3}
+
+
+def test_rank_unknown_strategy() -> None:
+    payload = _load_fixture()
+    request = RankRequest(
+        query=payload["query"],
+        candidates=[PaperCandidate.model_validate(c) for c in payload["candidates"]],
+        strategy="bm25",
+    )
+    # Bypass Pydantic literal validation to test the ranker's own guard.
+    invalid_request = request.model_copy(update={"strategy": "unknown"})
+    with pytest.raises(ValueError, match="Unknown strategy"):
+        rank(invalid_request)
 
 
 def test_rank_respects_budget(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,14 +4,17 @@ version = "0.1.0"
 description = "Research and engineering workspace for complex academic paper search"
 requires-python = ">=3.11"
 dependencies = [
+    "httpx>=0.28.1",
     "metasci-universe",
     "pydantic>=2.13.4",
+    "python-dotenv>=1.2.3",
     "rank-bm25>=0.2.2",
 ]
 
 [dependency-groups]
 dev = [
     "huggingface-hub>=1.0,<2",
+    "pyarrow>=25.0.1",
     "pytest>=8.4,<10",
     "pyyaml>=6,<7",
     "ruff>=0.12,<1",
