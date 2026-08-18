@@ -42,11 +42,15 @@ EMBEDDING_MODEL=intfloat/e5-base-v2
 EMBEDDING_API_KEY=
 ```
 
+脚本会自动去掉 `/v1` 并使用 TEI 原生 `/embed` 端点（支持服务端截断），因此你不需要改 base URL。
+
 然后：
 
 ```bash
 uv run python experiments/litsearch-retrieval/eval.py --strategy embedding
 ```
+
+> 注意：编码 64,183 篇语料需要数分钟；查询阶段每次要和全部语料向量计算 cosine，延迟约 3–4 秒/查询。
 
 ### Hybrid
 
