@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Research and engineering workspace for complex academic paper search"
 requires-python = ">=3.11"
 dependencies = [
+    "deepxiv-sdk>=1.0.0",
     "httpx>=0.28.1",
     "metasci-universe",
     "pydantic>=2.13.4",
