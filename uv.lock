@@ -630,6 +630,20 @@ wheels = [
 ]
 
 [[package]]
+name = "deepxiv-sdk"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "python-dotenv" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/4b/d5d77e6c13fa3ea5477acc967bd1a7903eb118e0fb1f597f58343f4b9202/deepxiv_sdk-1.0.0.tar.gz", hash = "sha256:42021ad250d167a083cf8441e6634ecd6376198a961acbd3c39420859846e8a1", size = 75040, upload-time = "2026-08-12T08:08:00.424Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/6e/2ee715759cce17838ca820a45b96d6faa07136d0ef630c7bf3f8ac7355b0/deepxiv_sdk-1.0.0-py3-none-any.whl", hash = "sha256:d817608a8a757e911aa8072a32261320e7b47ff0d6d1cf4992c1beb3081864fb", size = 58430, upload-time = "2026-08-12T08:07:58.862Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2632,6 +2646,7 @@ name = "scholar-search"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "deepxiv-sdk" },
     { name = "httpx" },
     { name = "metasci-universe" },
     { name = "pydantic" },
@@ -2650,6 +2665,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "deepxiv-sdk", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "metasci-universe", editable = "packages/metasci-universe" },
     { name = "pydantic", specifier = ">=2.13.4" },
