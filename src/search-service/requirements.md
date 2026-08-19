@@ -13,3 +13,11 @@ search/fulltext（相当于聚合过的 api，不需要体现出原始检索采�
 
 目前只想到这两个
 
+search service = ？(openalex api + arixiv api) hp
+
+元数据 -> 共被引、耦合、被引量、作者h指数，等等，耦合到什么程度作为检索返回
+
+pagerank，
+
+
+
