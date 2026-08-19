@@ -499,3 +499,5 @@ E. Main + Reviewer
 该版本保留原设想中的四个核心实体，同时将 Reviewer 从“读取主轨迹的旁路 Agent”
 收紧为“读取 Search/Evidence State 的独立上下文审查器”，并把 Reviewer 的有效性、
 成本和噪声纳入可验证的实验设计。
+
+![架构图](./assets/figure1.png)
