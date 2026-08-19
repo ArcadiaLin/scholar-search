@@ -2,6 +2,3 @@
 	path = packages/widi
 	url = https://github.com/ArcadiaLin/widi.git
 	branch = main
-[submodule "packages/metasci-universe"]
-	path = packages/metasci-universe
-	url = https://github.com/DoraJaymon/metasci-universe.git
