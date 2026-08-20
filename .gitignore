@@ -1,4 +1,5 @@
 # Local reference material. Track source metadata, not binaries or full clones.
+/packages/metascientist/
 /papers/
 /references/papers/
 /references/repos/

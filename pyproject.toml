@@ -29,7 +29,7 @@ package = false
 
 [tool.uv.workspace]
 members = [
-    "packages/metasci-universe",
+    "packages/metascientist/metasci-universe",
 ]
 
 [tool.uv.sources]
@@ -48,7 +48,7 @@ extend-exclude = [
     "artifacts",
     "data",
     "papers",
-    "packages/metasci-universe",
+    "packages/metascientist",
     "packages/widi",
     "references",
     "runs",
