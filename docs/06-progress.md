@@ -12,7 +12,7 @@
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` | 正文只放 $SP_M$ 静态部分，检索策略留给 S5 |
-| S4 | 概念到实现映射 + Preference 载体 | DONE | `PENDING_S4` | 只建载体与版本约定，条目内容归 S5 |
+| S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | TODO | | |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
 | S7 | 其余检索工具 | TODO | | |
@@ -364,7 +364,7 @@
   3. 启动诊断里没有 `resource.context_file.*` 相关告警，
      说明 `preference/np-agent.md` 这个相对路径被正确解析到 agent dir 下。
 
-- commit: `PENDING_S4`
+- commit: `d990f67`
 
 
 
