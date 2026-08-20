@@ -57,8 +57,12 @@ class Aggregator:
         top_k: int,
         end_date: str | None,
         native_params: dict[str, Any] | None,
-    ) -> tuple[str, list[SearchResultItem], Failure | None, int]:
-        """Call a single provider and classify any failure."""
+    ) -> tuple[str, str, list[SearchResultItem], Failure | None, int]:
+        """Call a single provider with a single query and classify any failure.
+
+        Returns the query alongside the provider so a failure can name which
+        decomposition failed, not just which source.
+        """
         start = time.perf_counter_ns()
         try:
             items = await provider.search(
@@ -73,42 +77,49 @@ class Aggregator:
                 stage="recall",
                 source=provider.name,
                 error_type=exc.error_type,
-                message=str(exc),
+                message=f"query {query!r}: {exc}",
             )
-            return provider.name, [], failure, elapsed
+            return provider.name, query, [], failure, elapsed
         except Exception as exc:  # pragma: no cover - defensive catch
             elapsed = (time.perf_counter_ns() - start) // 1_000_000
             failure = Failure(
                 stage="recall",
                 source=provider.name,
                 error_type="unknown",
-                message=str(exc),
+                message=f"query {query!r}: {exc}",
             )
-            return provider.name, [], failure, elapsed
+            return provider.name, query, [], failure, elapsed
 
         elapsed = (time.perf_counter_ns() - start) // 1_000_000
-        return provider.name, items, None, elapsed
+        return provider.name, query, items, None, elapsed
 
     def _deduplicate(
         self,
-        items_by_source: dict[str, list[SearchResultItem]],
+        items_by_list: dict[str, list[SearchResultItem]],
     ) -> dict[str, tuple[Paper, list[tuple[str, int]]]]:
-        """Group normalized results by stable ID and merge duplicates."""
+        """Group normalized results by stable ID and merge duplicates.
+
+        The outer key identifies one *recall list*, which is a (provider, query)
+        pair rather than a provider: a paper found by three subqueries contributes
+        three RRF terms, and agreement across decompositions is exactly the signal
+        the fusion exists to read. Provider attribution does not come from this
+        key - it lives on ``Paper.sources``, set from the item itself.
+        """
         groups: dict[str, list[tuple[Paper, str, int]]] = {}
 
-        for source, items in items_by_source.items():
+        for list_id, items in items_by_list.items():
             for item in items:
                 paper = search_result_item_to_paper(item)
                 key = paper.doi or paper.arxiv_id or paper.openalex_id or paper.paper_id
                 rank = item.source_rank or 1
-                groups.setdefault(key, []).append((paper, source, rank))
+                groups.setdefault(key, []).append((paper, list_id, rank))
 
         merged: dict[str, tuple[Paper, list[tuple[str, int]]]] = {}
         for key, group in groups.items():
             papers = [paper for paper, _, _ in group]
             paper = merge_papers(papers, _SOURCE_PREFERENCE)
-            source_ranks = [(source, rank) for _, source, rank in group]
-            merged[key] = (paper, source_ranks)
+            list_ranks = [(list_id, rank) for _, list_id, rank in group]
+            merged[key] = (paper, list_ranks)
 
         return merged
 
@@ -118,16 +129,20 @@ class Aggregator:
         top_k: int,
         k: int = _DEFAULT_RRF_K,
     ) -> list[RankedPaper]:
-        """Score merged papers with RRF and return the top_k ranked list."""
-        scored: list[tuple[float, Paper, list[str]]] = []
-        for paper, source_ranks in merged.values():
-            score = sum(1.0 / (k + rank) for _, rank in source_ranks)
-            scored.append((score, paper, [source for source, _ in source_ranks]))
+        """Score merged papers with RRF and return the top_k ranked list.
+
+        One term per recall list the paper appeared in, so appearing in several
+        lists outranks a single high placement.
+        """
+        scored: list[tuple[float, Paper]] = []
+        for paper, list_ranks in merged.values():
+            score = sum(1.0 / (k + rank) for _, rank in list_ranks)
+            scored.append((score, paper))
 
         scored.sort(key=lambda entry: entry[0], reverse=True)
 
         ranked: list[RankedPaper] = []
-        for idx, (score, paper, _sources) in enumerate(scored[:top_k], start=1):
+        for idx, (score, paper) in enumerate(scored[:top_k], start=1):
             ranked.append(
                 RankedPaper(
                     **paper.model_dump(),
@@ -146,30 +161,40 @@ class Aggregator:
         sources: list[str] | None,
         timeout_ms: int,
         provider_params: dict[str, dict[str, Any]] | None,
+        subqueries: list[str] | None = None,
     ) -> tuple[list[RankedPaper], SearchState, Provenance, int]:
-        """Run a multi-source aggregated search.
+        """Run a multi-source, multi-query aggregated search.
 
-        Returns the ranked paper list, search state, provenance, and elapsed
-        milliseconds. Raises ``AggregationError`` if no provider can be selected
-        or if all providers fail.
+        Every (provider, query) pair is one recall list, and all of them are fused
+        by RRF into a single ranking. Returns the ranked paper list, search state,
+        provenance, and elapsed milliseconds. Raises ``AggregationError`` if no
+        provider can be selected or if every call fails.
         """
         selected = self._select_sources(sources)
         if not selected:
             raise AggregationError("No enabled providers support keyword search.")
 
-        # Fetch more than top_k from each source so RRF has candidates to merge.
+        # The main query first, then subqueries, deduplicated: an agent that
+        # repeats the main query as a subquery must not pay for it twice.
+        queries: list[str] = [query]
+        for subquery in subqueries or []:
+            if subquery not in queries:
+                queries.append(subquery)
+
+        # Fetch more than top_k from each list so RRF has candidates to merge.
         per_provider_top_k = top_k * 2
         tasks = [
             asyncio.create_task(
                 self._search_one(
                     provider,
-                    query,
+                    issued,
                     per_provider_top_k,
                     end_date,
                     (provider_params or {}).get(provider.name),
                 )
             )
             for provider in selected
+            for issued in queries
         ]
 
         start = time.perf_counter_ns()
@@ -181,40 +206,47 @@ class Aggregator:
         except TimeoutError as exc:
             raise AggregationError(f"Aggregation timed out after {timeout_ms}ms") from exc
 
-        items_by_source: dict[str, list[SearchResultItem]] = {}
+        items_by_list: dict[str, list[SearchResultItem]] = {}
         issued_queries: list[IssuedQuery] = []
         failures: list[Failure] = []
+        recalled = 0
 
-        for name, items, failure, latency_ms in results:
+        for name, issued, items, failure, latency_ms in results:
             if failure is not None:
                 failures.append(failure)
                 continue
-            items_by_source[name] = items
+            # One entry per (provider, query): the RRF key must distinguish the
+            # lists, and merging them here would throw away exactly the agreement
+            # signal the fusion is there to read.
+            items_by_list[f"{name}::{issued}"] = items
+            recalled += len(items)
             issued_queries.append(
                 IssuedQuery(
                     provider=name,
                     mode="aggregated",
-                    query=query,
+                    query=issued,
                     raw=(provider_params or {}).get(name),
                     latency_ms=latency_ms,
                 )
             )
 
-        if not items_by_source:
+        if not items_by_list:
             raise AggregationError("All providers failed.")
 
-        merged = self._deduplicate(items_by_source)
+        merged = self._deduplicate(items_by_list)
         ranked = self._rank(merged, top_k)
 
         elapsed_ms = (time.perf_counter_ns() - start) // 1_000_000
+        filters: dict[str, Any] = {}
+        if end_date:
+            filters["end_date"] = end_date
+        if len(queries) > 1:
+            filters["subqueries"] = queries[1:]
         search_state = SearchState(
             issued_queries=issued_queries,
             selected_sources=[provider.name for provider in selected],
-            filters={"end_date": end_date} if end_date else {},
-            candidate_counts=CandidateCounts(
-                recalled=sum(len(items) for items in items_by_source.values()),
-                returned=len(ranked),
-            ),
+            filters=filters,
+            candidate_counts=CandidateCounts(recalled=recalled, returned=len(ranked)),
             failures=failures,
         )
         provenance = Provenance(

@@ -6,8 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from search_service.schemas.paper import RankedPaper
-from search_service.schemas.state import Provenance, SearchState
+from search_service.schemas.paper import Paper, RankedPaper
+from search_service.schemas.state import Failure, Provenance, SearchState
 
 
 class SearchResponse(BaseModel):
@@ -18,6 +18,22 @@ class SearchResponse(BaseModel):
     provenance: Provenance = Field(default_factory=Provenance, description="Source and version provenance.")
     cost_usd: float = Field(default=0.0, description="Total estimated USD spent.")
     elapsed_ms: int = Field(default=0, description="Wall-clock time in milliseconds.")
+
+
+class PaperResponse(BaseModel):
+    """One resolved paper, with the accounting of how it was resolved.
+
+    ``tried_sources`` and ``failures`` are part of the answer, not debug output:
+    lookup routes over several providers, and "arXiv had it" and "arXiv timed out
+    but OpenAlex had it" are different facts about the record's provenance.
+    """
+
+    paper: Paper = Field(description="The resolved paper in the unified schema.")
+    source: str = Field(description="Provider that resolved the ID.")
+    tried_sources: list[str] = Field(
+        default_factory=list, description="Providers attempted, in order, up to and including the one that answered.")
+    failures: list[Failure] = Field(
+        default_factory=list, description="Failures from providers tried before this one answered.")
 
 
 class ProviderInfo(BaseModel):

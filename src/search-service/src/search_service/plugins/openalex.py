@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -19,6 +21,9 @@ from search_service.providers.base import SearchProvider
 from search_service.schemas import ProviderCapabilities
 
 _OPENALEX_ID_PREFIX = "https://openalex.org/"
+# How much of a rejected query's error body to keep. Long enough for OpenAlex's
+# "valid fields are ..." list, which is what makes the rejection actionable.
+_ERROR_BODY_CHARS = 1_200
 _WORK_SELECT = (
     "id,display_name,title,publication_year,publication_date,type,"
     "abstract_inverted_index,doi,ids,open_access,cited_by_count,"
@@ -154,6 +159,8 @@ class OpenAlexClient:
         self._min_interval = 1.0 / self.rate_limit_rps
         self._last_request_at = 0.0
         self._lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
+        self._active_sessions = 0
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -205,7 +212,13 @@ class OpenAlexClient:
                     if attempt == self.max_retries:
                         raise SourceError("openalex", "rate_limit", "OpenAlex rate limit exceeded") from exc
                 elif 400 <= status < 500:
-                    raise SourceError("openalex", "http", f"OpenAlex client error {status}: {exc.response.text[:200]}") from exc
+                    # A 4xx from OpenAlex is a rejected query, and its body names the
+                    # offending field and lists the valid ones. That list is the whole
+                    # value of the message to a caller writing a native query, and 200
+                    # characters cut it off mid-way.
+                    raise SourceError(
+                        "openalex", "http", f"OpenAlex client error {status}: {exc.response.text[:_ERROR_BODY_CHARS]}"
+                    ) from exc
                 elif attempt == self.max_retries:
                     raise SourceError("openalex", "http", f"OpenAlex server error {status}: {exc.response.text[:200]}") from exc
             except httpx.RequestError as exc:
@@ -269,6 +282,28 @@ class OpenAlexClient:
             page += 1
 
         return candidates
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[None]:
+        """Bracket one operation, closing the shared client when the last one leaves.
+
+        The client has to be closed between operations because ``search_sync``
+        drives each call from its own ``asyncio.run`` loop, and a client bound to
+        a finished loop cannot be reused. But closing it unconditionally in a
+        ``finally`` breaks concurrency: with several queries in flight against one
+        provider, the first to finish closed the connection under the others and
+        they failed with "Cannot send a request, as the client has been closed".
+        Counting operations keeps both properties.
+        """
+        async with self._session_lock:
+            self._active_sessions += 1
+        try:
+            yield
+        finally:
+            async with self._session_lock:
+                self._active_sessions -= 1
+                if self._active_sessions == 0:
+                    await self.close()
 
     async def close(self) -> None:
         if self._client is not None and not self._client.is_closed:
@@ -386,46 +421,41 @@ class OpenAlexPlugin(SearchProvider):
         native_params: dict[str, Any] | None = None,
     ) -> list[SearchResultItem]:
         """Search works using OpenAlex full-text search."""
-        try:
+        async with self._client.session():
             return await self._client.search(
                 query,
                 top_k,
                 end_date=end_date,
                 native_params=native_params,
             )
-        finally:
-            await self._client.close()
 
     async def query(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         """Execute a native query against any OpenAlex endpoint."""
-        try:
+        async with self._client.session():
             return await self._client.query(endpoint, params)
-        finally:
-            await self._client.close()
 
     async def lookup(self, paper_id: str) -> dict[str, Any] | None:
-        try:
-            return await self._client.lookup_work(paper_id)
-        finally:
-            await self._client.close()
+        """Look up one work by OpenAlex ID, normalized.
+
+        Normalized rather than raw because the caller routes on the ``id_lookup``
+        capability and must not need to know which provider answered; the raw
+        work is still reachable through ``search_native``.
+        """
+        async with self._client.session():
+            work = await self._client.lookup_work(paper_id)
+            return _parse_work(work).model_dump() if work else None
 
     async def get_references(self, paper_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        try:
+        async with self._client.session():
             return await self._client.fetch_references(paper_id, limit)
-        finally:
-            await self._client.close()
 
     async def get_citations(self, paper_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        try:
+        async with self._client.session():
             return await self._client.fetch_citations(paper_id, limit)
-        finally:
-            await self._client.close()
 
     async def facet(self, query: str, group_by: list[str]) -> dict[str, Any]:
-        try:
+        async with self._client.session():
             return await self._client.fetch_facet(query, group_by)
-        finally:
-            await self._client.close()
 
 
 Plugin = OpenAlexPlugin

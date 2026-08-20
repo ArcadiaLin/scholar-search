@@ -23,7 +23,7 @@ from search_service.schemas.paper import (
     search_result_item_to_paper,
 )
 from search_service.schemas.requests import PassthroughRequest, SearchRequest
-from search_service.schemas.responses import ProviderInfo, SearchResponse
+from search_service.schemas.responses import PaperResponse, ProviderInfo, SearchResponse
 from search_service.schemas.state import (
     CandidateCounts,
     Failure,
@@ -43,6 +43,7 @@ __all__ = [
     "FieldProvenance",
     "IssuedQuery",
     "Paper",
+    "PaperResponse",
     "PassthroughRequest",
     "Provenance",
     "ProviderCapabilities",

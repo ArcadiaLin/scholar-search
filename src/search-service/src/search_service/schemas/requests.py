@@ -16,6 +16,14 @@ class SearchRequest(BaseModel):
     """
 
     query: str = Field(description="Unified search query string.")
+    subqueries: list[str] | None = Field(
+        default=None,
+        max_length=8,
+        description=(
+            "Additional queries to run alongside `query`, fused into one ranked list. "
+            "Bounded: fan-out multiplies provider calls, so the cap is part of the contract."
+        ),
+    )
     top_k: int = Field(default=20, ge=1, le=200, description="Maximum results to return.")
     end_date: str | None = Field(
         default=None,
@@ -28,6 +36,16 @@ class SearchRequest(BaseModel):
     provider_params: dict[str, dict[str, Any]] | None = Field(
         default=None,
         description="Provider-native parameters keyed by provider name.")
+
+    @field_validator("subqueries")
+    @classmethod
+    def _validate_subqueries(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        # A blank subquery would become an unfiltered provider call: it costs a
+        # request and returns noise. Drop them rather than issue them.
+        cleaned = [item.strip() for item in value if item and item.strip()]
+        return cleaned or None
 
     @field_validator("end_date")
     @classmethod

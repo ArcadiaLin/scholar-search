@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from search_service import __version__
 from search_service.aggregator import Aggregator
-from search_service.api import providers_router, search_router
+from search_service.api import paper_router, providers_router, search_router
 from search_service.config import ServiceConfig
 from search_service.models import HealthResponse
 from search_service.plugin_loader import PluginRegistry
@@ -55,6 +55,7 @@ app = FastAPI(
 # paths uniquely by their full path + method.
 app.include_router(search_router)
 app.include_router(providers_router)
+app.include_router(paper_router)
 
 
 @app.exception_handler(Exception)

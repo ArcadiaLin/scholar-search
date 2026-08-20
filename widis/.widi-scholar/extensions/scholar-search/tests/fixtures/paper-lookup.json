@@ -1,0 +1,56 @@
+{
+  "paper": {
+    "paper_id": "1706.03762",
+    "doi": null,
+    "arxiv_id": "1706.03762",
+    "openalex_id": null,
+    "cluster_id": null,
+    "external_ids": {},
+    "title": "Attention Is All You Need",
+    "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks.",
+    "authors": [
+      {
+        "name": "Ashish Vaswani",
+        "orcid": null,
+        "affiliation": null,
+        "h_index": null
+      },
+      {
+        "name": "Noam Shazeer",
+        "orcid": null,
+        "affiliation": null,
+        "h_index": null
+      }
+    ],
+    "venue": null,
+    "year": 2017,
+    "published": "2017-06-12",
+    "updated": null,
+    "version": null,
+    "type": null,
+    "urls": {
+      "paper": "https://arxiv.org/abs/1706.03762",
+      "pdf": "https://arxiv.org/pdf/1706.03762.pdf"
+    },
+    "citation_count": null,
+    "normalized_impact": null,
+    "citation_percentile": null,
+    "counts_by_year": null,
+    "author_h_index": null,
+    "references": null,
+    "citations": null,
+    "is_retracted": null,
+    "record_thinness": null,
+    "citation_confidence": null,
+    "field_provenance": {},
+    "sources": [
+      "arxiv"
+    ],
+    "raw": null
+  },
+  "source": "arxiv",
+  "tried_sources": [
+    "arxiv"
+  ],
+  "failures": []
+}

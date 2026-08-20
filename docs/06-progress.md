@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
-| S2 | 核心检索工具 | TODO | | |
+| S2 | 核心检索工具 | DONE | `PENDING_S2` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | TODO | | |
 | S4 | 概念到实现映射 + Preference 载体 | TODO | | |
 | S5 | $NP_0^{agent}$ 条目化 | TODO | | |
@@ -122,10 +122,129 @@
 
 - commit: `6414773`
 
+### 2026-08-20 — S2
+
+- 做了（extension 侧）：
+  - `core/service-client.ts` 增加三个方法：`searchMetadata` / `getPaper` / `providerQuery`。
+    `getJson` 改成 `requestJson`（支持 POST 与 body）；错误对象新增 `bodyJson` 与
+    `detail`，让上层能读到 Service 自己给的原因，而不是只有一段序列化前缀。
+  - 新增 `PaperSummary` 视图：**刻意不是** Service 的完整 `Paper`。
+    `raw` / `field_provenance` / `references` / `citations` / `counts_by_year`
+    不进摘要（`design.md` §4.1，Agent 不在上下文里搬运候选集），
+    有一条测试专门断言"fixture 里有 `raw`、摘要里没有"。
+  - `index.ts` 注册三个工具，按 `prototype.md` §7.1 的签名：
+    - `search_metadata(query, subqueries?, intent?, top_k, end_date?, sources?, judge_level?)`
+    - `get_paper(paper_id)`
+    - `provider_query(provider, endpoint?, raw)`
+  - 三条契约的落地：
+    1. **工具描述里不写任何 provider 语法**。`provider_query` 的描述只写职责
+       与"先调 list_providers"，语法由运行时能力表给。
+    2. **`provider_query` 是单一工具**，provider 是参数，不拆成
+       `openalex_query` / `arxiv_query`。
+    3. **被拒绝返回可操作诊断**：`describeHttpFailure` 按状态码分流——
+       400/422 说"改这个参数别重试"，404 说"查 list_providers 和标识符"，
+       501 说"这是能力上限，换个源"，502 说"provider 挂了，别的源也许还行"。
+  - 输出自己限长：候选列表最多列 20 条（其余进 `details` 并在正文里说明省略了几条）、
+    摘要 280 字符、passthrough 4000 字符、总长 6000 字符。
+
+- 做了（Service 侧，S2 需要但原来没有的）：
+  - **新增 `GET /paper/{paper_id}`**（`api/paper.py`）：按 `id_lookup` 能力路由而非
+    按 provider 名，ID 形状只用来排序不用来过滤，返回 `tried_sources` 与 `failures`。
+    没有这个端点 `get_paper` 根本无法诚实实现，理由见 D-06。
+  - **实现 `ArxivPlugin.lookup()`**：arXiv 的能力表一直声明 `id_lookup=True`，
+    而基类是 `raise NotImplementedError`——按能力路由的调用方会拿到崩溃而不是记录。
+    用 arXiv 自己的 `id_list`（精确，不是 `search_query` 的模糊匹配）。
+  - **`OpenAlexPlugin.lookup()` 改为返回归一化记录**（原来返回 raw work），
+    这样按能力路由的调用方不需要知道是谁应答的。
+  - **`subqueries` 端到端打通**：`SearchRequest.subqueries`（上限 8，空串丢弃）
+    → aggregator 对每个 (provider, query) 发一次召回 → 全部一起做 RRF 融合。
+    被多个子查询同时命中的论文因此排得更高，这正是融合存在的理由。
+    `search_state.issued_queries` 现在每个 (源, 查询) 一条，
+    `filters.subqueries` 记录实际用了哪些分解。
+    原来两个 plugin 的 `search()` 都接收 `subqueries` 参数但**直接丢掉**。
+  - **修 SV-01**（下方"Search Service 缺陷"）：扇出暴露的并发缺陷。
+  - **放宽 OpenAlex 4xx 错误体截断** 200 → 1200 字符：OpenAlex 的拒绝信息里
+    带"合法字段列表"，200 字符正好把这个列表切断，而它恰恰是契约 3 里
+    "去哪查"的答案。实测见下。
+
+- 未实现、且**不假装**已实现的两个参数（Service 侧没有对应能力）：
+  - `judge_level`：这个 Service build 里没有任何判别器。工具接受该参数，
+    但传入非 `off` 的值时会在输出里明确写"本 build 未实现判别，下面的候选未经判别，
+    把排序当召回顺序而不是相关性"。不静默忽略。
+  - `intent`：记录在调用上，明确写"不影响排序"。
+  两者保留在签名里，是为了 S5/S7 不必再改工具契约。
+
+- 验收（实际命令与输出）：
+  1. `tsgo --noEmit -p .../scholar-search/tsconfig.json` → 退出 0。
+  2. `biome check --error-on-warnings` 对 5 个非 fixture 文件 → `No fixes applied.`
+  3. `npm run test:widis` → `# tests 87 / # pass 87 / # fail 0`
+     （S1 是 65 条，本 stage 新增 22 条。）
+  4. Python 侧：`uv run pytest -q` → `76 passed`（S1 时是 52，本 stage 新增 24 条）；
+     `uv run ruff check .` → `All checks passed!`；
+     `ruff format --check .` → 16 files（基线 17，见 E-06），新增文件都是干净的。
+  5. 真实检索（Service 起在 127.0.0.1:8125，模型 vllm/qwen3.6-35b-a3b，
+     打真实 OpenAlex + arXiv API）：
+     - 提问："找 2020-01-01 前关于 transformer attention 的论文，
+       用 subqueries 覆盖 self-attention 与 sequence transduction，
+       再用 get_paper 取头条的完整记录"
+     - `run_summary` → `tools: {calls:2, failed:0, byName:{search_metadata:1, get_paper:1}}`,
+       `providerErrors: 0`
+     - 工具输出里的过程账目：`sources queried: arxiv, openalex`,
+       `queries issued: 6 | candidates recalled: 149 | returned: 20`,
+       `filters applied: {"end_date":"2020-01-01","subqueries":["self-attention","sequence transduction"]}`,
+       `failures: 0`
+     - 6 = (1 主查询 + 2 子查询) × 2 个源，与扇出设计一致。
+  6. `provider_query` 真实调用（同一会话形态）：
+     模型先 `list_providers`，再对 openalex 写原生 filter。
+     `run_summary` → `tools: {calls:14, failed:9, byName:{list_providers:1, provider_query:13}}`。
+     **9 次失败是真实发生的**，值得记下来：模型在试 OpenAlex 的 filter 语法，
+     每次被拒都拿到形如
+     `"'search' is not a valid field. Valid fields are ... abstract.search, ..."`
+     的诊断，最后成功拿到 `is_oa` + `publication_year` 的正确写法。
+     这条链路正是契约 3 想要的可观测形态（Reviewer 据此能区分"在试探边界"和"在乱写"），
+     但 9 次里有相当一部分是因为合法字段列表被截断在 200 字符——这就是上面
+     放宽到 1200 字符的直接原因。修完后直接验证：
+     ```
+     $ curl -X POST .../provider/openalex/query -d '{"endpoint":"works","params":{"filter":"bogus_field:1"}}'
+     {"detail":"... bogus_field is not a valid field. Valid fields are ...
+      abstract.search, ..., authorships.institutions.type, ..."}   # 1281 字节
+     ```
+
+- commit: `PENDING_S2`
+
+
 ## 决策记录
 
 stage 执行中做出的、路线图没有规定的选择，记在这里（含理由）。
 不要推翻已记录的决策，除非它被证明是错的。
+
+### D-06 — S2 允许改 `src/search-service/`，而且必须改
+
+路线图 S2 的落点只写了 extension（`index.ts` + `core/` + tests），隐含假设
+Service 已经提供三个工具需要的一切。实际不成立：
+
+| 工具 | Service 侧现状 |
+| --- | --- |
+| `search_metadata` | `POST /search/metadata` 有，但 `subqueries` 参数不存在 |
+| `provider_query` | `POST /provider/{name}/query` 有，够用 |
+| `get_paper` | **没有任何单篇端点** |
+
+所以 S2 的落点扩展到 `src/search-service/`。这不违反 §1.1——§1.1 限制的是
+`packages/widi/`（WIDI runtime），而 Search Service 按 §1.2 的映射表本来就是
+"已有的 Python HTTP 服务"，是这条架构里的一个正式部件。
+
+考虑过但否决的替代方案：
+
+- **用 `/search` 模拟 `get_paper`**：`/search` 是关键词检索，不是 ID 精确查找。
+  拿 DOI 当关键词去搜，命中不保证是同一篇。这是把"能跑"当成"对"。
+- **在 extension 里用 passthrough 拼 `get_paper`**：那要求 extension 知道
+  "openalex 的单篇路径是 `works/{id}`、arXiv 的是 `id_list=`"，
+  即把 provider 语法搬进 extension——正好违反本 stage 契约 1。
+- **不做 `subqueries`，让签名里留个空参数**：签名里有、行为上没有，
+  等于骗调用方。要么实现，要么像 `judge_level` 那样显式报告不支持。
+  `subqueries` 是整条设计里最核心的策略旋钮（查询分解），
+  而 aggregator 里做扇出只是把"每 provider 一次调用"改成"每 (provider, query) 一次"，
+  代价小、价值大，所以实现；`judge_level` 需要一整个判别器，所以显式报告不支持。
 
 ### D-04 — S1 的真实链路验收用一次性 profile 脚手架，不提前占用 S3
 
@@ -333,6 +452,58 @@ cd packages/widi && git push origin HEAD:<branch>
 （S1 里用 id 起 agent 成功），没有阻断任何东西。`AGENTS.md` §6 要求触及 WIDI fork
 时补丁最小，所以只修真正阻断 S1 的 U-01。留给用户决定是否要顺手一起修。
 
+## Search Service 缺陷
+
+`src/search-service/` 自己的缺陷。与 WIDI 无关，修在本仓库内即可。
+
+### SV-01 — provider 的共享 HTTP client 在并发下互相关闭（S2 已修）
+
+**这条是 S2 的 subquery 扇出暴露出来的**，不是我写的新代码里的 bug，
+但是我的改动让它变成必然发生。
+
+发现方式不是测试，是一次真实检索。模型自己在回答里说
+"2 subqueries failed on OpenAlex due to client closure"，轨迹里坐实了：
+
+```
+failures (2):
+  - openalex [unknown] query 'self-attention mechanism': Cannot send a request, as the client has been closed.
+  - openalex [unknown] query 'sequence transduction with attention': Cannot send a request, as the client has been closed.
+```
+
+成因：每个 plugin 持有一个 `httpx.AsyncClient`，而每个包装方法都是
+
+```python
+try:
+    return await self._client.search(...)
+finally:
+    await self._client.close()     # 关掉的是共享 client
+```
+
+扇出之前，aggregator 对每个 provider 只发一次调用，永远撞不上。
+扇出之后同一个 provider 上有 (1 主查询 + N 子查询) 个并发调用，
+最先完成的那个把 client 关掉，其余全部失败。
+
+**这个 `finally: close()` 不能直接删掉**——它是有原因的：
+`SourcePlugin.search_sync` 用 `asyncio.run` 每次开一个新事件循环，
+而绑在已结束循环上的 httpx client 不能复用。删掉它会让连续两次
+`search_sync` 挂掉。
+
+修法：给三个 client（openalex / arxiv / serper）加一个计数的
+`session()` async context manager——进入时计数 +1，离开时 -1，
+**归零时才关**。两个性质同时保住：并发安全，且空闲时仍然关闭。
+所有包装方法从 `try/finally: close()` 改成 `async with self._client.session():`。
+
+serper 当前是 `enabled: false`，但同样改了：扇出会同等地并发调用它，
+留着就是埋一个"启用即坏"的雷。
+
+回归测试 `tests/test_client_session.py`（6 条）把两侧都钉住：
+三个并发 search 全部成功、混合操作并发、归零后 client 确实关闭、
+连续两次 `search_sync` 仍然可用、失败路径不泄漏计数。
+
+验证：修前那次真实检索 `failures (2)`；修后同样的提问
+`queries issued: 6 | candidates recalled: 149 | returned: 20`，
+`failures: 0`，轨迹里 `client has been closed` 出现 0 次。
+
 ## 环境与工具链缺陷
 
 父仓库脚本与本机环境的问题，不涉及 `packages/widi/`，与上面一节分开记。
@@ -431,6 +602,26 @@ mock transport 也一样，于是没装 `socksio` 就直接 ImportError。
 $ cd src/search-service && env -u all_proxy -u ALL_PROXY uv run pytest -q
 52 passed
 ```
+
+### E-06 — `ruff format --check .` 本来就红（未修，非本路线引入）
+
+`npm run check:python` 里的 `ruff format --check .` 在改动前就有 17 个文件不合格：
+这个仓库的 Python 代码普遍用 `description="...")` 把右括号接在末行的写法，
+而 ruff 要它单独一行。受影响的包括 `README.md` 里的示例代码、
+`aggregator.py:47` 的 `_select_sources`、`capabilities.py`、`requests.py` 等等。
+
+**未修**：全仓库重排会产生一个跟本路线无关的巨大 diff。
+本路线只保证**不新增**这笔债：
+
+| | 不合格文件数 |
+| --- | --- |
+| 基线（S2 改动前） | 17 |
+| S2 改动后 | 16 |
+
+新增的 4 个文件（`api/paper.py`、`tests/test_paper_lookup.py`、
+`tests/test_subquery_fanout.py`、`tests/test_client_session.py`）都跑过
+`ruff format` 因此干净；被我改过的既有文件，报错位置逐个核对过都是改动前就有的老位置。
+`ruff check .`（lint，不是格式）是 `All checks passed!`。
 
 ### E-05 — `packages/widi` 完整测试套件在 Windows 上有 12 个文件失败（未修，既有基线）
 
