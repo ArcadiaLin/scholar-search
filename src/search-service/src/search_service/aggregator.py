@@ -184,6 +184,19 @@ class SearchAggregator:
             if item.year and not year:
                 year = item.year
 
+        # Preserve source identity and raw data.
+        involved_sources = [item.source for item in group_sorted]
+        if len(involved_sources) == 1:
+            merged_source = involved_sources[0]
+            merged_raw = base.raw
+        else:
+            merged_source = "merged"
+            merged_raw = {
+                item.source: item.raw
+                for item in group_sorted
+                if item.raw is not None
+            }
+
         return SearchResultItem(
             paper_id=base.paper_id,
             title=base.title,
@@ -195,7 +208,7 @@ class SearchAggregator:
             arxiv_id=arxiv_id,
             openalex_id=openalex_id,
             urls=urls,
-            source="merged",
+            source=merged_source,
             source_rank=base.source_rank,
-            raw=None,
+            raw=merged_raw,
         )

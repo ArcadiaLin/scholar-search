@@ -66,7 +66,8 @@ async def test_aggregator_combines_sources(cache):
     assert response.total == 2
     assert response.source_counts == {"openalex": 1, "arxiv": 1}
     assert response.errors == []
-    assert response.results[0].source == "merged"
+    assert response.results[0].source == "openalex"
+    assert response.results[1].source == "arxiv"
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ and returns them in a unified schema.
 ```bash
 cd src/search-service
 uv sync
-uv run uvicorn search_service.main:app --reload --host 0.0.0.0 --port 8000
+PYTHONPATH=src uv run uvicorn search_service.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Configuration

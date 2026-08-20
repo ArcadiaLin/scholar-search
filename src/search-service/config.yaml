@@ -26,7 +26,7 @@ plugins:
 
   arxiv:
     enabled: true
-    base_url: "http://export.arxiv.org/api/query"
+    base_url: "https://export.arxiv.org/api/query"
     timeout: 30.0
     max_retries: 2
     # arXiv polite usage: ~1 request per 3 seconds.

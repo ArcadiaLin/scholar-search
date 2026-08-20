@@ -27,7 +27,7 @@ _ARXIV_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
 def plugin():
     return ArxivPlugin({
         "enabled": True,
-        "base_url": "http://export.arxiv.org/api/query",
+        "base_url": "https://export.arxiv.org/api/query",
         "timeout": 5.0,
         "max_retries": 0,
         "rate_limit_rps": 1000.0,
@@ -36,7 +36,7 @@ def plugin():
 
 @respx.mock
 def test_search_returns_results(plugin):
-    route = respx.get("http://export.arxiv.org/api/query").mock(return_value=Response(200, text=_ARXIV_ATOM))
+    route = respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text=_ARXIV_ATOM))
 
     results = plugin.search_sync("attention is all you need", top_k=5)
 
@@ -55,7 +55,7 @@ def test_search_returns_results(plugin):
 @respx.mock
 def test_search_empty_results(plugin):
     empty_atom = '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
-    respx.get("http://export.arxiv.org/api/query").mock(return_value=Response(200, text=empty_atom))
+    respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text=empty_atom))
 
     results = plugin.search_sync("xyznonexistent", top_k=5)
     assert results == []
@@ -63,7 +63,7 @@ def test_search_empty_results(plugin):
 
 @respx.mock
 def test_search_rate_limit(plugin):
-    respx.get("http://export.arxiv.org/api/query").mock(return_value=Response(503, text="Service Unavailable"))
+    respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(503, text="Service Unavailable"))
 
     from search_service.exceptions import SourceError
 
@@ -74,7 +74,7 @@ def test_search_rate_limit(plugin):
 
 @respx.mock
 def test_search_timeout(plugin):
-    respx.get("http://export.arxiv.org/api/query").mock(side_effect=httpx.TimeoutException("Timeout"))
+    respx.get("https://export.arxiv.org/api/query").mock(side_effect=httpx.TimeoutException("Timeout"))
 
     from search_service.exceptions import SourceError
 
@@ -85,7 +85,7 @@ def test_search_timeout(plugin):
 
 @respx.mock
 def test_search_parse_error(plugin):
-    respx.get("http://export.arxiv.org/api/query").mock(return_value=Response(200, text="not xml"))
+    respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text="not xml"))
 
     from search_service.exceptions import SourceError
 

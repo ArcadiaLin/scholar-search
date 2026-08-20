@@ -154,7 +154,7 @@ class ArxivClient:
     """Async arXiv API client with polite rate limiting."""
 
     def __init__(self, config: dict[str, Any]) -> None:
-        self.base_url = str(config.get("base_url", "http://export.arxiv.org/api/query")).rstrip("/")
+        self.base_url = str(config.get("base_url", "https://export.arxiv.org/api/query")).rstrip("/")
         self.timeout = float(config.get("timeout", 30.0))
         self.max_retries = max(0, int(config.get("max_retries", 2)))
         self.rate_limit_rps = max(0.1, float(config.get("rate_limit_rps", 0.33)))
@@ -165,7 +165,10 @@ class ArxivClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+            )
         return self._client
 
     async def _rate_limit(self) -> None:

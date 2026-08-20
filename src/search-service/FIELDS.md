@@ -192,15 +192,17 @@ Serper.dev 返回标准 Google SERP JSON。常见顶层字段如下：
 | `arxiv_id` | string \| null | arXiv ID |
 | `openalex_id` | string \| null | OpenAlex ID |
 | `urls` | object | `{paper, pdf, html}`，可能为 null |
-| `source` | string | 结果来源插件名，合并后为 `"merged"` |
+| `source` | string | 结果来源插件名；单源结果为具体来源（如 `"openalex"`），多源合并后为 `"merged"` |
 | `source_rank` | int \| null | 该结果在源内的原始排序 |
-| `raw` | object \| null | 除已提取字段外，上游 API 返回的其余原始字段 |
+| `raw` | object \| null | 除已提取字段外，上游 API 返回的其余原始字段；多源合并时为 `{source: raw_data}` 字典 |
 
 ### 聚合时的字段合并规则
 
 - 去重 key：`paper_id`；无 `paper_id` 时用归一化 title 兜底。
 - 同一论文的多源结果会合并成一条，元数据优先级：`openalex` > `arxiv` > `serper`。
 - URL 取并集，优先：`arxiv` PDF > `serper` link > `openalex` open_access/landing_page。
+- `source` 字段：仅当多个源返回同一论文时才标记为 `"merged"`；单一来源时保留原始来源名。
+- `raw` 字段：单一来源时保留该源整理后的原始字段；多源合并时保留 `{source: raw_data}`，便于追溯每个源返回的完整信息。
 
 ## 5. 最终 HTTP 响应字段（`SearchResponse`）
 
