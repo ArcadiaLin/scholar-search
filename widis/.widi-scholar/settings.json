@@ -31,7 +31,7 @@
 	"themes": [],
 	"terminal": { "showImages": true, "imageWidthCells": 60, "clearOnShrink": false, "showTerminalProgress": false },
 	"images": { "autoResize": true, "blockImages": false },
-	"enabledModels": ["kimi-coding/*", "moonshot/*", "anthropic/*"],
+	"enabledModels": ["kimi-coding/*", "moonshot/*", "anthropic/*", "vllm/*"],
 	"doubleEscapeAction": "tree",
 	"treeFilterMode": "default",
 	"editorPaddingX": 0,
