@@ -1,5 +1,10 @@
 # 检索架构设计
 
+> 系统设计主文档。本文只描述模块、契约与约束的**行为抽象**。
+> 研究理念见 `agentic_search_preference_reviewer_research_design.md`；
+> 检索能力层的机制见 `search-service.md`；
+> 具体的数据源、算法、工具名、指标与参数见 `prototype.md`。
+
 ## 1. 设计目标与总体判断
 
 本系统面向科研场景下的复杂学术查询。实现 Agentic Search：将**查询理解、受控检索、轨迹审查、偏好沉淀和结构化输出**组织成一个可迭代、可观测的闭环。
@@ -19,12 +24,14 @@
 - **四模块**
   1. **Main Search Agent**：理解查询、规划检索步骤、调用检索工具、生成最终结果。
   2. **Search Service**：封装多源检索、缓存、跨源归一、去重、引文扩展和候选排序。
-     它被 Main Agent 当作工具使用，但不负责自然语言决策。
+     它被 Main Agent 当作工具使用；内部可以包含无状态的语言模型判别器，
+     但不持有独立状态，也不做动作选择。
   3. **Sidecar Reviewer Agent**：在线提供过程建议；离线比较结果并归因，提出偏好更新。
   4. **Preference Persistence**：持久化用户偏好，分为自然语言偏好和检索超参数偏好。
 
-其中，Agent 负责需要语言推理的决策，Service 负责可测试的检索能力，
+其中，Agent 负责需要**独立状态**的决策，Service 负责可测试的检索能力，
 Preference Persistence 负责跨任务记忆。三者职责不能互相替代。
+边界不在"谁能调用语言模型"，而在"谁持有跨调用的状态"（§2.2、§4）。
 
 ## 2. 变量定义与数据契约
 
@@ -34,10 +41,10 @@ Preference Persistence 负责跨任务记忆。三者职责不能互相替代。
 | --- | --- | --- |
 | $RQ$ | Raw Query | 用户原始检索请求 |
 | $PH_k$ | Preference State | 第 $k$ 个版本的持久偏好 |
-| $NP_k$ | Natural-language Preference | 面向 Agent 推理的自然语言偏好 |
+| $NP_k$ | Natural-language Preference | 自然语言形式的偏好，按消费方分为 $NP_k^{\mathrm{agent}}$ 与 $NP_k^{\mathrm{judge}}$ |
 | $HP_k$ | Hyperparameter Preference | 面向 Search Service 的结构化参数偏好 |
 | $P$ | Base Parameters | 系统预设的基础检索参数与安全上限 |
-| $\theta^S_k$ | Search Configuration | 由 $P$ 与 $HP_k$ 共同生成的运行配置 |
+| $\theta^S_k$ | Search Configuration | 由 $P$、$HP_k$ 与 $NP_k^{\mathrm{judge}}$ 共同生成的运行配置 |
 | $SI_k$ | Search Input | Main Agent 的自然语言任务输入 |
 | $SP_M$ / $SP_R$ | System Prompt | Main / Reviewer 的系统提示 |
 | $T^M$ / $T^R$ | Tool Set | Main / Reviewer 的工具集 |
@@ -67,9 +74,32 @@ SI_k       &= \mathrm{Compose}(RQ,\; NP_k) \\
 \end{aligned}
 $$
 
-- $NP$ 改变 **Agent 如何理解和执行任务**：查询理解、子查询分解、结果组织、回答风格；
-- $HP$ 改变 **Search Service 实际返回什么结果**：检索源选择、时间窗、各源 top-k、
+- $NP$ 是**自然语言、由语言模型消费**的偏好；
+- $HP$ 是**结构化参数、由确定性代码消费**的偏好。
+
+划分依据是表示形式与消费者类型，**不是**"给 Agent 用还是给 Service 用"。
+这条区分在 Search Service 内部出现语言模型判别器（LLM-as-judge）时是必要的：
+判别标准是自然语言，却作用于检索服务。因此 $NP_k$ 按消费方分流：
+
+$$
+NP_k = \big\langle NP_k^{\mathrm{agent}},\ NP_k^{\mathrm{judge}} \big\rangle
+$$
+
+$$
+\begin{aligned}
+SI_k       &= \mathrm{Compose}\big(RQ,\; NP_k^{\mathrm{agent}}\big) \\
+\theta^S_k &= \mathrm{Configure}\big(P,\; HP_k,\; NP_k^{\mathrm{judge}}\big)
+\end{aligned}
+$$
+
+- $NP^{\mathrm{agent}}$ 改变 **Agent 如何理解和执行任务**：查询理解、子查询分解、结果组织、回答风格；
+- $NP^{\mathrm{judge}}$ 改变 **Service 如何判别相关性**：分级定义、正反例、排除标准；
+- $HP$ 改变 **Service 实际返回什么结果**：检索源选择、时间窗、各源 top-k、
   召回/扩展开关、排序权重、预算分配。
+
+三者的共同约束一致：episode 内只读，更新走学习环。Service 内的判别器必须是
+无状态 worker（$y=f(x)$，输入自足、无跨调用记忆、不做动作选择），
+否则它就是第二个决策主体，不能算在 Service 里。详见 `search-service.md` §7.2。
 
 $\mathrm{Configure}$ 不是简单覆盖：$P$ 提供默认值、允许范围和安全上限，$HP_k$ 只能覆盖
 被显式标记为可调的字段，不能突破系统级预算、日期边界和并发上限：
@@ -130,7 +160,7 @@ $$
 $T^M$ 不是直接暴露给模型的一组裸 API，而是 Search Service 依据 $\theta^S_k$ 生成的
 **受约束工具视图**：同一个工具在不同 $HP_k$ 下可用参数范围不同。每次工具调用都携带
 本次 episode 的查询约束、日期边界和预算上下文；工具返回结构化 $o_t$，而不是要求
-Agent 解析终端文本。
+Agent 解析终端文本。具体的工具名与签名见 `prototype.md` §7.1。
 
 典型流程：
 
@@ -157,39 +187,29 @@ $$
 
 ## 4. Search Service：被 Agent 调用的检索能力层
 
-本节只定义契约与边界；接口、多源分工、特征体系与可训练 rerank 的完整设计见
-[`search-service.md`](./search-service.md)。
+本节只定义契约与边界。接口、provider 抽象、rerank 的机制见
+[`search-service.md`](./search-service.md)；具体的数据源、算法与参数见
+[`prototype.md`](./prototype.md)。
 
-Search Service 对 Agent 暴露少量稳定的领域工具，内部再编排多个检索源和本地算法：
+Search Service 对 Agent 暴露少量稳定的领域工具，内部编排多个检索源与本地算法：
 
 $$
 o_t = \mathrm{SearchService}(u_t;\; \theta^S_k)
 $$
 
 ```text
-query plan
-    -> multi-source recall
-    -> ID normalization and deduplication
-    -> metadata/full-text enrichment
-    -> BM25/embedding/rule rerank
-    -> citation or related-work expansion
-    -> budgeted result selection
+probe -> recall -> align -> enrich -> rank -> expand -> select
 ```
 
-各环节职责：
+四条职责边界：
 
-- **召回**：根据查询意图和 $HP_k$ 选择检索源。当前规划以 OpenAlex 为主召回，
-  arXiv 补充时间敏感的预印本、标题/ID 精确命中和全文入口；
-  不把不同源的相关性分数直接相加。具体的源分工见 `search-service.md` §3.2。
-- **归一与去重**：统一 DOI、arXiv ID、OpenAlex ID，
-  通过外部 ID 映射和标题/作者等字段合并同一论文的多源记录。
-- **富集**：按需补齐摘要、作者、venue、开放获取信息、引用计量、主题分类和引文关系。
-  论文全文或引用内容只在后续筛选确实需要时获取，控制 token、延迟和 API 次数。
-- **候选排序**：先用确定性的过滤、去重和 BM25 等低成本步骤缩小候选集，再使用
-  embedding 或模型判别做精排。不同来源的分数不可直接比较时使用名次融合，
-  并保留来源分数和排序依据。
-- **扩展**：围绕高置信候选进行 references / citations / related works 扩展；扩展深度、
-  扇出、并发和总候选数必须有界。
+- **召回与合并**：按查询意图与 $HP_k$ 选择源；跨源相关性分数不可比，融合发生在名次层，
+  不做分数相加。同一论文的多源记录按主键归一为一条。
+- **富集**：按需补齐题录、计量与引文关系；全文只在确实需要时获取。
+- **排序**：先用确定性的低成本步骤缩小候选，再按预算逐级启用更贵的判别。
+  Service 内部允许包含**无状态的语言模型判别器**，但它必须是 $y=f(x)$ 形态的 worker：
+  **决定花多少预算做判别是 Agent 的策略，执行判别是 Service 的实现**。
+- **扩展**：围绕高置信候选沿引文关系扩展；深度、扇出、并发与总候选数必须有界。
 
 横切约束：
 
@@ -197,7 +217,8 @@ query plan
 - 每个入口显式接收 `end_date`，不得召回评测时间边界之后的论文；
 - 记录来源、查询、命中数、耗时、缓存命中、API 调用数、Token 和费用；
 - 跨源合并后只向 Agent 返回统一的 Paper schema，避免 Agent 自己重复实现去重；
-- 超过预算时停止当前策略并返回可解释的部分结果，不静默丢弃失败请求。
+- 超过预算时停止当前策略并返回可解释的部分结果，不静默丢弃失败请求；
+- 排序结果保留每一维特征与排序依据，使 Reviewer 的归因分析成为可能。
 
 因此，Search Service 是"能力与约束"的边界，Main Search Agent 是"策略与解释"的边界。
 Service 同时是 $\bar{\tau}_t$ 的**生产者**：可观察状态由 Service 和运行时计算，而不是由 Agent 自述。
@@ -268,23 +289,17 @@ $$
 
 即：观察 Main 的公开搜索轨迹 → 结合 Reviewer 独立上下文 → 读取当前持久偏好 →
 输出影响下一步搜索策略的建议。Reviewer 检查查询是否覆盖关键约束、结果是否存在明显
-噪声、是否需要补充来源或引文扩展、证据是否足够、当前策略是否接近预算上限：
+噪声、是否需要补充来源或引文扩展、证据是否足够、当前策略是否接近预算上限。
 
-```text
-A_t = {
-  advice_id, priority: high | medium | low,
-  action: refine_query | add_source | expand_citation | rerank | stop,
-  target, instructions, evidence_ids,
-  confidence, expected_effect, novelty_key
-}
-```
+$A_t$ 的**动作取自有限且可枚举的集合**，每条建议必须携带证据引用、预期效果与去重键。
+有限动作空间是可归因与可 gate 的前提；具体的动作名与字段见 `prototype.md` §7.2。
 
-$A_t$ 先经过运行时 **gate**，再通过事件/消息通道进入 $U_M$。gate 至少执行：
+$A_t$ 先经过运行时 **gate**，再进入 $U_M$。gate 至少执行：
 
-- `advice_id` 和 `novelty_key` 去重；
-- 检查建议是否引用当前 `EvidenceState` 中存在的 `evidence_ids`；
+- 建议标识与去重键的去重；
+- 检查建议引用的证据是否存在于当前 `EvidenceState`；
 - 检查建议是否突破来源、并发、API、Token 或墙钟预算；
-- 检查同一 action 是否连续无效或重复出现；
+- 检查同一动作是否连续无效或重复出现；
 - 限制每轮和每次 episode 的 Reviewer 调用次数。
 
 Reviewer 不直接改写 $C^M_t$，也不绕过 Search Service 调用未预算的 API。重复的
@@ -317,10 +332,41 @@ $$
 - **Update**：按归因结论分别形成 $\Delta NP_k$（改 Agent 怎么想）和 $\Delta HP_k$（改 Service
   返回什么）。
 
-Reviewer 通过 `update_preference` 工具提交带理由、证据引用、版本和置信度的更新，
-而不是直接写入存储。
+Reviewer **不直接写入任何持久状态**，而是通过一组类型化的离线工具提交提案（§5.4）。
 
-### 5.4 模型配置
+### 5.4 Reviewer 的工具集
+
+$T^R$ 分两条通道，触发条件与验证路径不同：
+
+| 通道 | 时间尺度 | 何时可用 | 产出 | 验证 |
+| --- | --- | --- | --- | --- |
+| 在线建议 | $t$ | episode 内的 checkpoint | $A_t$ | 运行时 gate |
+| 离线提案 | $k$ | 取得可验证反馈 $F$ 之后 | $\Delta PH_k$ 候选、搜索任务、消融请求 | 回放验证 |
+
+在线通道之外，Reviewer 还需要**只读**地查看证据与排序依据的能力——
+这是归因的前提，但不构成新的决策权。
+
+离线通道的三条约束使它与在线通道同构：
+
+1. **工具返回提案与验证结果，不返回"已生效"**。所有提案统一走
+   $\theta_{k+1} = \mathrm{ValidateOptimize}(\theta_k,\ \mathrm{Proposal}_R,\ D_{\mathrm{train}})$，
+   验证不通过即拒绝，Reviewer 不能覆盖。
+2. **必须携带证据与假设**，证据需引用轨迹、输出或反馈中真实存在的标识符。
+3. **held-out 阶段离线工具不注册进 $T^R$**——不是调用后无效，而是根本不可见。
+   这比"冻结 $PH_k$"更硬，杜绝了绕过冻结协议的通道。
+
+其中"触发参数搜索"类提案的语义需要精确：Reviewer 提交的是**搜索子空间与目标函数偏置**，
+不是参数数值。它具备语义层面的归因能力，不具备数值求解能力；
+让它出子空间、由优化器求解、由验证器决定是否持久化，能力边界与职责边界因此对齐。
+
+工具集由系统设计者定义，**Reviewer 不能扩展它，也不修改系统实现**。
+一旦动作空间由有限变为开放，就无法枚举、无法 gate、无法版本化，
+也无法在 held-out 阶段冻结，消融组之间的差异将混入实现变更的效应而不再可解释。
+系统实现的演进属于离线工程流程，由人与脚本承担，不建模为本架构的一部分。
+
+具体的工具名与签名见 `prototype.md` §7.2。
+
+### 5.5 模型配置
 
 $$
 \begin{aligned}
@@ -343,13 +389,14 @@ $$
 
 $$
 \begin{aligned}
-NP_k + RQ &\xrightarrow{\ \mathrm{Compose}\ } SI_k       &&\to \text{Main Agent behavior} \\
-HP_k + P  &\xrightarrow{\ \mathrm{Configure}\ } \theta^S_k &&\to \text{Search Service configuration} \\
+NP_k^{\mathrm{agent}} + RQ &\xrightarrow{\ \mathrm{Compose}\ } SI_k       &&\to \text{Main Agent behavior} \\
+HP_k + NP_k^{\mathrm{judge}} + P  &\xrightarrow{\ \mathrm{Configure}\ } \theta^S_k &&\to \text{Search Service configuration} \\
 PH_k      &\xrightarrow{\ \mathrm{snapshot}\ } \bar{\tau}_t &&\to \text{explicit preference memory in review context}
 \end{aligned}
 $$
 
-- $NP_k$ 影响查询理解、子查询分解、结果组织和回答风格；
+- $NP_k^{\mathrm{agent}}$ 影响查询理解、子查询分解、结果组织和回答风格；
+- $NP_k^{\mathrm{judge}}$ 影响 Service 内判别器的分级标准，与数值权重一样可被学习；
 - $HP_k$ 影响检索源选择、时间窗、top-k、扩展策略、排序权重和预算分配；
 - $PH_k$ 作为审查上下文中的显式偏好记忆，用于判断结果是否符合用户长期偏好；
 - $P$ 提供默认值、允许范围和安全上限；

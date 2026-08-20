@@ -106,3 +106,157 @@ repositories:
         package: "@earendil-works/pi-agent-core"
         base_version: 0.83.0
         local_package: "@arcadialin/agent-core"
+
+  - id: asta-bench
+    url: https://github.com/allenai/asta-bench.git
+    revision: 5c844b7451e3a98cd0df71ea626bb217803d2bed
+    imported_at: 2026-08-14
+    local_path: references/repos/asta-bench
+    license: Apache-2.0
+    purpose: >-
+      AstaBench / PaperFindingBench evaluation-protocol reference: query typing, LLM-judge with
+      weighted relevance criteria, estimated-recall normalization, lower-bound-corrected nDCG,
+      judgement caching, and end_date (inserted_before) enforcement.
+    provenance: >-
+      Read-only mirror; NOTICE.txt present. Asta Paper Finder itself is NOT in this repository —
+      the agent source lives at https://github.com/allenai/asta-paper-finder and Ai2 accessed a
+      deployed instance over HTTP during their own evaluation.
+    entry_points:
+      - astabench/evals/paper_finder/task.py
+      - astabench/evals/paper_finder/eval.py
+      - astabench/evals/paper_finder/relevance.py
+      - astabench/evals/paper_finder/paper_finder_utils.py
+      - astabench/tools/paper_finder_ai2i.py
+    notes:
+      - The local tree carries a 579 MB `.venv/` that is not part of upstream source; prune before re-import.
+      - No training code: AstaBench is an evaluation harness built on inspect_ai.
+
+  - id: litsearch
+    url: https://github.com/princeton-nlp/LitSearch.git
+    revision: 42107c06b0ed0ed02ff7836ec285d3df2f0e5b09
+    imported_at: 2026-08-14
+    local_path: references/repos/litsearch
+    license: MIT
+    purpose: LitSearch benchmark harness and its BM25 / dense-retriever baselines
+    provenance: Read-only mirror.
+    notes:
+      - Local tree is 141 MB, dominated by prebuilt `retrieval_indices/`.
+
+  - id: spar
+    url: https://github.com/xiaofengShi/SPAR.git
+    revision: 468c651e99cfac69beb343b2ed9f418ddc38f873
+    imported_at: 2026-08-14
+    local_path: references/repos/spar
+    license: MIT (declared in README only — see compliance_risk)
+    purpose: >-
+      SPAR multi-agent scholar-retrieval pipeline; `rerank.py`, `search_node.py` and
+      `pipeline_spar.py` are the rerank / judgement references.
+    provenance: Read-only mirror.
+    compliance_risk: >-
+      README.md declares the MIT License and links to a LICENSE file, but no LICENSE file exists
+      anywhere in the tree. Obtain written confirmation from upstream before migrating any code.
+
+  - id: arxiv-mcp-server
+    url: https://github.com/blazickjp/arxiv-mcp-server
+    revision: 70723dff7d9b2facab94097fa46fde94996814f2
+    imported_at: 2026-08-15
+    local_path: references/repos/arxiv-mcp-server
+    license: Apache-2.0
+    purpose: >-
+      MCP server exposing arXiv search/download as agent tools; interface reference for the
+      passthrough mode in docs/search-service.md §2.1.
+    provenance: Read-only mirror.
+
+datasets:
+  - id: asta-bench-v0.3.1
+    source: huggingface
+    repo_id: allenai/asta-bench
+    repo_type: dataset
+    revision: a600dc767f850385f4664772e3ba7a7f8be17d5e
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/asta-bench-v0.3.1
+    manifests:
+      - references/datasets/asta-bench-v0.3.1.download.json
+      - references/datasets/asta-bench-v0.3.1-literature.download.json
+    subsets:
+      - tasks/paper_finder_bench/*.json
+      - tasks/sqa/*.json
+      - tasks/arxivdigestables/*
+      - tasks/labbench/litqa2_mapping.json
+    purpose: PaperFindingBench queries and scorer criteria; dev/test splits for retrieval evaluation
+    license: See upstream dataset card; not mirrored locally — verify before any redistribution.
+
+  - id: litqa2-heldout
+    source: huggingface
+    repo_id: futurehouse/aviary-paper-data
+    repo_type: dataset
+    revision: e9ee5486ac60f06f9e7f217ca167e2a83874ded4
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/litqa2-heldout
+    manifests: [references/datasets/litqa2-heldout.download.json]
+    subsets: ["LitQA2/*"]
+    purpose: LitQA2 held-out split used by the PaperFinder litqa2 evaluation tasks
+    license: See upstream dataset card; not mirrored locally — verify before any redistribution.
+
+  - id: litsearch
+    source: huggingface
+    repo_id: princeton-nlp/LitSearch
+    repo_type: dataset
+    revision: 9573fb284a1026c998df47024b888a163f0f0e25
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/litsearch
+    manifests: [references/datasets/litsearch.download.json]
+    subsets: ["query/*", "corpus_clean/*"]
+    purpose: LitSearch retrieval benchmark queries and cleaned corpus
+    license: See upstream dataset card; not mirrored locally — verify before any redistribution.
+
+  - id: sparbench-hf
+    source: huggingface
+    repo_id: XiaofengAlg/SPARBench
+    repo_type: dataset
+    revision: 98b95a3937de355fa78f773082d522afc9a70029
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/sparbench-hf
+    manifests: [references/datasets/sparbench-hf.download.json]
+    purpose: SPARBench queries used as an academic-search baseline comparison
+    license: See upstream dataset card; not mirrored locally — verify before any redistribution.
+
+  # --- Entries below have no download manifest; origin and revision are unverified. ---
+  # Do not treat them as reproducible inputs until the fields marked TODO are filled in.
+
+  - id: pasa-dataset
+    source: unverified
+    upstream_hint: https://github.com/bytedance/pasa (README points here; HF repo id not recorded)
+    revision: TODO
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/pasa
+    subsets: [AutoScholarQuery, RealScholarQuery, paper_database, sft_crawler, sft_selector]
+    purpose: PaSa training/eval splits (AutoScholarQuery, RealScholarQuery) and SFT data
+    license: LICENSE file present in the directory — confirm it covers the data as well as the code.
+    provenance: Local directory without a download manifest; origin and revision must be re-established before use in any reported experiment.
+
+  - id: litqa2-public
+    source: unverified
+    revision: TODO
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/litqa2-public
+    subsets: [LitQA2 parquet]
+    purpose: Public LitQA2 split
+    provenance: Local directory without a download manifest; origin and revision unverified.
+
+  - id: asta-bench-legacy
+    source: unverified
+    revision: TODO
+    downloaded_at: 2026-08-14
+    local_path: references/datasets/asta-bench
+    purpose: Earlier unversioned AstaBench task snapshot; superseded by asta-bench-v0.3.1
+    provenance: Local directory without a download manifest. Candidate for deletion once nothing references it.
+
+  - id: loose-jsonl-exports
+    source: unverified
+    revision: TODO
+    local_path:
+      - references/datasets/AutoScholarQuery_test.jsonl
+      - references/datasets/spar_bench.jsonl
+    purpose: Flattened exports presumably derived from pasa-dataset and sparbench-hf
+    provenance: Derivation script not recorded; regenerate from the versioned sources or document the transform.
