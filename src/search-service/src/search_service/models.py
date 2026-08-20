@@ -14,6 +14,7 @@ class SearchResultItem(BaseModel):
     title: str = Field(description="Paper title.")
     authors: list[str] | None = Field(default=None, description="List of author names, if available.")
     abstract: str | None = Field(default=None, description="Paper abstract, if available.")
+    venue: str | None = Field(default=None, description="Publication venue or journal, if available.")
     published: str | None = Field(default=None, description="Publication date or year in ISO 8601 format.")
     year: int | None = Field(default=None, description="Publication year, if available.")
     doi: str | None = Field(default=None, description="DOI, if available.")

@@ -100,9 +100,9 @@ async def list_providers(request: Request) -> list[ProviderInfo]:
 async def provider_passthrough(name: str, payload: PassthroughRequest, request: Request) -> JSONResponse:
     """Execute a provider-native query with governance but no result rewriting.
 
-    The provider must advertise ``search_native_query`` capability. The Service
-    applies budget/time-bound governance but does not rewrite the native query
-    expression.
+    For OpenAlex, ``payload.endpoint`` is the entity path (e.g. ``works``,
+    ``authors``) and ``payload.params`` are forwarded verbatim. For arXiv,
+    ``endpoint`` is ignored and ``params`` are forwarded to the Atom API.
     """
     registry = _get_registry(request)
     loaded = registry.list_plugins()
@@ -134,17 +134,15 @@ async def provider_passthrough(name: str, payload: PassthroughRequest, request: 
         )
 
     try:
-        raw_result = await instance.search_native(payload.raw)
+        if name == "openalex":
+            endpoint = payload.endpoint or "works"
+            raw_result = await instance.query(endpoint, payload.params)
+        else:
+            raw_result = await instance.search_native(payload.params)
     except Exception as exc:  # pragma: no cover - provider errors surfaced generically
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"detail": f"Provider '{name}' query failed: {exc}"},
-        )
-
-    if payload.normalize:
-        return JSONResponse(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            content={"detail": "normalize=true is not yet implemented for passthrough."},
         )
 
     return JSONResponse(content=raw_result)

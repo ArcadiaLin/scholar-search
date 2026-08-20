@@ -1,4 +1,4 @@
-"""Tests for the new search service schemas."""
+"""Tests for the search service schemas."""
 
 from __future__ import annotations
 
@@ -6,64 +6,50 @@ import pytest
 from pydantic import ValidationError
 
 from search_service.schemas import (
-    Budget,
-    ExpandRequest,
     Failure,
-    Paper,
     PassthroughRequest,
     ProviderCapabilities,
     RankedPaper,
-    RankRequest,
     SearchRequest,
     SearchResponse,
 )
 
 
-def test_budget_accepts_zero_and_null():
-    b = Budget()
-    assert b.usd is None
-    assert b.wall_ms is None
-    assert b.api_calls is None
-
-    b = Budget(usd=0.05, wall_ms=0, api_calls=0)
-    assert b.usd == 0.05
-    assert b.wall_ms == 0
+def test_search_request_accepts_openalex_params():
+    req = SearchRequest(
+        search="machine learning",
+        filter="publication_year:>2020",
+        sort="cited_by_count:desc",
+        per_page=50,
+        page=1,
+        end_date="2026-06-30",
+        top_k=10,
+    )
+    assert req.search == "machine learning"
+    assert req.filter == "publication_year:>2020"
+    assert req.per_page == 50
+    assert req.top_k == 10
 
 
 def test_search_request_end_date_validation():
     with pytest.raises(ValidationError):
-        SearchRequest(query="test", end_date="abc")
+        SearchRequest(end_date="abc")
 
-    req = SearchRequest(query="test", end_date="2026-06-30")
+    req = SearchRequest(end_date="2026-06-30")
     assert req.end_date == "2026-06-30"
 
 
 def test_search_request_defaults():
-    req = SearchRequest(query="test")
+    req = SearchRequest()
     assert req.top_k == 20
-    assert req.intent is None
-    assert req.subqueries == []
+    assert req.search is None
+    assert req.filter is None
 
 
-def test_rank_request_with_paper_candidates():
-    paper = Paper(paper_id="W1", title="Test Paper")
-    req = RankRequest(query="test", candidates=[paper], top_k=10)
-    assert len(req.candidates) == 1
-    assert req.candidates[0].paper_id == "W1"
-
-
-def test_passthrough_request_native_payload():
-    req = PassthroughRequest(raw={"filter": "publication_year:>2020"})
-    assert req.raw["filter"] == "publication_year:>2020"
-    assert req.normalize is False
-
-
-def test_expand_request_depth_bound():
-    with pytest.raises(ValidationError):
-        ExpandRequest(seed_ids=["W1"], depth=3)
-
-    req = ExpandRequest(seed_ids=["W1"], depth=1, fanout=20)
-    assert req.depth == 1
+def test_passthrough_request_endpoint_and_params():
+    req = PassthroughRequest(endpoint="works", params={"filter": "publication_year:>2020"})
+    assert req.endpoint == "works"
+    assert req.params["filter"] == "publication_year:>2020"
 
 
 def test_ranked_paper_inherits_paper_fields():
@@ -86,7 +72,6 @@ def test_search_response_includes_state():
         elapsed_ms=3180,
     )
     assert response.search_state is not None
-    assert response.evidence_state is not None
     assert response.provenance is not None
 
 

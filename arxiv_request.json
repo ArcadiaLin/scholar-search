@@ -1,0 +1,445 @@
+{
+  "results": [
+    {
+      "paper_id": "2009.00804",
+      "title": "Architectural Implications of Graph Neural Networks",
+      "authors": [
+        "Zhihui Zhang",
+        "Jingwen Leng",
+        "Lingxiao Ma",
+        "Youshan Miao",
+        "Chao Li",
+        "Minyi Guo"
+      ],
+      "abstract": "Graph neural networks (GNN) represent an emerging line of deep learning models that operate on graph structures. It is becoming more and more popular due to its high accuracy achieved in many graph-related tasks. However, GNN is not as well understood in the system and architecture community as its counterparts such as multi-layer perceptrons and convolutional neural networks. This work tries to introduce the GNN to our community. In contrast to prior work that only presents characterizations of GCNs, our work covers a large portion of the varieties for GNN workloads based on a general GNN description framework. By constructing the models on top of two widely-used libraries, we characterize the GNN computation at inference stage concerning general-purpose and application-specific architectures and hope our work can foster more system and architecture research for GNNs.",
+      "published": "2020-09-02T03:36:24Z",
+      "year": 2020,
+      "doi": null,
+      "arxiv_id": "2009.00804",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2009.00804",
+        "pdf": "https://arxiv.org/pdf/2009.00804.pdf",
+        "html": "https://arxiv.org/html/2009.00804"
+      },
+      "source": "arxiv",
+      "source_rank": 1,
+      "raw": {
+        "updated": "2021-12-24T14:59:46Z",
+        "category": [
+          {
+            "text": null,
+            "term": "cs.AR",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.LG",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.PF",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "4 pages, published in IEEE Computer Architecture Letters (CAL) 2020",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.AR"
+        },
+        "arxiv:journal_ref": "in IEEE Computer Architecture Letters, vol. 19, no. 1, pp. 59-62, 1 Jan.-June 2020",
+        "arxiv:doi": "10.1109/LCA.2020.2988991"
+      }
+    },
+    {
+      "paper_id": "2207.13219",
+      "title": "Dalorex: A Data-Local Program Execution and Architecture for Memory-bound Applications",
+      "authors": [
+        "Marcelo Orenes-Vera",
+        "Esin Tureci",
+        "David Wentzlaff",
+        "Margaret Martonosi"
+      ],
+      "abstract": "Applications with low data reuse and frequent irregular memory accesses, such as graph or sparse linear algebra workloads, fail to scale well due to memory bottlenecks and poor core utilization. While prior work with prefetching, decoupling, or pipelining can mitigate memory latency and improve core utilization, memory bottlenecks persist due to limited off-chip bandwidth. Approaches doing processing in-memory (PIM) with Hybrid Memory Cube (HMC) overcome bandwidth limitations but fail to achieve high core utilization due to poor task scheduling and synchronization overheads. Moreover, the high memory-per-core ratio available with HMC limits strong scaling. We introduce Dalorex, a hardware-software co-design that achieves high parallelism and energy efficiency, demonstrating strong scaling with >16,000 cores when processing graph and sparse linear algebra workloads. Over the prior work in PIM, both using 256 cores, Dalorex improves performance and energy consumption by two orders of magnitude through (1) a tile-based distributed-memory architecture where each processing tile holds an equal amount of data, and all memory operations are local; (2) a task-based parallel programming model where tasks are executed by the processing unit that is co-located with the target data; (3) a network design optimized for irregular traffic, where all communication is one-way, and messages do not contain routing metadata; (4) novel traffic-aware task scheduling hardware that maintains high core utilization; and (5) a data placement strategy that improves work balance. This work proposes architectural and software innovations to provide the greatest scalability to date for running graph algorithms while still being programmable for other domains.",
+      "published": "2022-07-26T23:59:41Z",
+      "year": 2022,
+      "doi": null,
+      "arxiv_id": "2207.13219",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2207.13219",
+        "pdf": "https://arxiv.org/pdf/2207.13219.pdf",
+        "html": "https://arxiv.org/html/2207.13219"
+      },
+      "source": "arxiv",
+      "source_rank": 2,
+      "raw": {
+        "updated": "2023-05-04T15:26:26Z",
+        "category": [
+          {
+            "text": null,
+            "term": "cs.AR",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.DC",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "In Proceedings of the 29th IEEE Symposium on High-Performance Computer Architecture (HPCA-29)",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.AR"
+        },
+        "arxiv:journal_ref": "2023 IEEE International Symposium on High-Performance Computer Architecture (HPCA)",
+        "arxiv:doi": "10.1109/HPCA56546.2023.10071089"
+      }
+    },
+    {
+      "paper_id": "2201.00978",
+      "title": "PyramidTNT: Improved Transformer-in-Transformer Baselines with Pyramid Architecture",
+      "authors": [
+        "Kai Han",
+        "Jianyuan Guo",
+        "Yehui Tang",
+        "Yunhe Wang"
+      ],
+      "abstract": "Transformer networks have achieved great progress for computer vision tasks. Transformer-in-Transformer (TNT) architecture utilizes inner transformer and outer transformer to extract both local and global representations. In this work, we present new TNT baselines by introducing two advanced designs: 1) pyramid architecture, and 2) convolutional stem. The new \"PyramidTNT\" significantly improves the original TNT by establishing hierarchical representations. PyramidTNT achieves better performances than the previous state-of-the-art vision transformers such as Swin Transformer. We hope this new baseline will be helpful to the further research and application of vision transformer. Code will be available at https://github.com/huawei-noah/CV-Backbones/tree/master/tnt_pytorch.",
+      "published": "2022-01-04T04:56:57Z",
+      "year": 2022,
+      "doi": null,
+      "arxiv_id": "2201.00978",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2201.00978",
+        "pdf": "https://arxiv.org/pdf/2201.00978.pdf",
+        "html": "https://arxiv.org/html/2201.00978"
+      },
+      "source": "arxiv",
+      "source_rank": 3,
+      "raw": {
+        "updated": "2022-01-04T04:56:57Z",
+        "category": {
+          "text": null,
+          "term": "cs.CV",
+          "scheme": "http://arxiv.org/schemas/atom"
+        },
+        "arxiv:comment": "Tech Report. An extension of \"Transformer in Transformer\" (arXiv:2103.00112)",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.CV"
+        }
+      }
+    },
+    {
+      "paper_id": "2402.19171",
+      "title": "Towards Assessing Spread in Sets of Software Architecture Designs",
+      "authors": [
+        "Vittorio Cortellessa",
+        "J. Andres Diaz-Pace",
+        "Daniele Di Pompeo",
+        "Michele Tucci"
+      ],
+      "abstract": "Several approaches have recently used automated techniques to generate architecture design alternatives by means of optimization techniques. These approaches aim at improving an initial architecture with respect to quality aspects, such as performance, reliability, or maintainability. In this context, each optimization experiment usually produces a different set of architecture alternatives that is characterized by specific settings. As a consequence, the designer is left with the task of comparing such sets to identify the settings that lead to better solution sets for the problem. To assess the quality of solution sets, multi-objective optimization commonly relies on quality indicators. Among these, the quality indicator for the maximum spread estimates the diversity of the generated alternatives, providing a measure of how much of the solution space has been explored. However, the maximum spread indicator is computed only on the objective space and does not consider architectural information (e.g., components structure, design decisions) from the architectural space. In this paper, we propose a quality indicator for the spread that assesses the diversity of alternatives by taking into account architectural features. To compute the spread, we rely on a notion of distance between alternatives according to the way they were generated during the optimization. We demonstrate how our architectural quality indicator can be applied to a dataset from the literature.",
+      "published": "2024-02-29T13:52:39Z",
+      "year": 2024,
+      "doi": null,
+      "arxiv_id": "2402.19171",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2402.19171",
+        "pdf": "https://arxiv.org/pdf/2402.19171.pdf",
+        "html": "https://arxiv.org/html/2402.19171"
+      },
+      "source": "arxiv",
+      "source_rank": 4,
+      "raw": {
+        "updated": "2024-02-29T13:52:39Z",
+        "category": [
+          {
+            "text": null,
+            "term": "cs.SE",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.PF",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "17th European Conference on Software Architecture (ECSA 2023), 8 pages",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.SE"
+        },
+        "arxiv:journal_ref": "European Conference on Software Architecture 2023",
+        "arxiv:doi": "10.1007/978-3-031-42592-9_9"
+      }
+    },
+    {
+      "paper_id": "2412.20486",
+      "title": "LSQCA: Resource-Efficient Load/Store Architecture for Limited-Scale Fault-Tolerant Quantum Computing",
+      "authors": [
+        "Takumi Kobori",
+        "Yasunari Suzuki",
+        "Yosuke Ueno",
+        "Teruo Tanimoto",
+        "Synge Todo",
+        "Yuuki Tokunaga"
+      ],
+      "abstract": "Current fault-tolerant quantum computer (FTQC) architectures utilize several encoding techniques to enable reliable logical operations with restricted qubit connectivity. However, such logical operations demand additional memory overhead to ensure fault tolerance. Since the main obstacle to practical quantum computing is the limited qubit count, our primary mission is to design floorplans that can reduce memory overhead without compromising computational capability. Despite extensive efforts to explore FTQC architectures, even the current state-of-the-art floorplan strategy devotes 50% of memory space to this overhead, not to data storage, to ensure unit-time random access to all logical qubits. In this paper, we propose an FTQC architecture based on a novel floorplan strategy, Load/Store Quantum Computer Architecture (LSQCA), which can achieve almost 100% memory density. The idea behind our architecture is to separate all memory regions into small computational space called Computational Registers (CR) and space-efficient memory space called Scan-Access Memory (SAM). We define an instruction set for these abstract structures and provide concrete designs named point-SAM and line-SAM architectures. With this design, we can improve the memory density by allowing variable-latency memory access while concealing the latency with other bottlenecks. We also propose optimization techniques to exploit properties of quantum programs observed in our static analysis, such as access locality in memory reference timestamps. Our numerical results indicate that LSQCA successfully leverages this idea. In a resource-restricted situation, a specific benchmark shows that we can achieve about 90% memory density with 5% increase in the execution time compared to a conventional floorplan, which achieves at most 50% memory density for unit-time random access. Our design ensures broad quantum applicability.",
+      "published": "2024-12-29T14:58:23Z",
+      "year": 2024,
+      "doi": null,
+      "arxiv_id": "2412.20486",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2412.20486",
+        "pdf": "https://arxiv.org/pdf/2412.20486.pdf",
+        "html": "https://arxiv.org/html/2412.20486"
+      },
+      "source": "arxiv",
+      "source_rank": 5,
+      "raw": {
+        "updated": "2025-04-14T06:02:08Z",
+        "category": [
+          {
+            "text": null,
+            "term": "quant-ph",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.AR",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "17 pages, 15 figures, 2025 IEEE International Symposium on High Performance Computer Architecture (HPCA)",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "quant-ph"
+        },
+        "arxiv:journal_ref": "2025 IEEE International Symposium on High Performance Computer Architecture (HPCA), Las Vegas, NV, USA, 2025, pp. 304-320",
+        "arxiv:doi": "10.1109/HPCA61900.2025.00033"
+      }
+    },
+    {
+      "paper_id": "1306.0089",
+      "title": "A Novel Reconfigurable Architecture of a DSP Processor for Efficient Mapping of DSP Functions using Field Programmable DSP Arrays",
+      "authors": [
+        "Amitabha Sinha",
+        "Mitrava Sarkar",
+        "Soumojit Acharyya",
+        "Suranjan Chakraborty"
+      ],
+      "abstract": "Development of modern integrated circuit technologies makes it feasible to develop cheaper, faster and smaller special purpose signal processing function circuits. Digital Signal processing functions are generally implemented either on ASICs with inflexibility, or on FPGAs with bottlenecks of relatively smaller utilization factor or lower speed compared to ASIC. Field Programmable DSP Array (FPDA) is the proposed DSP dedicated device, redolent to FPGA, but with basic fixed common modules (CMs) (like adders, subtractors, multipliers, scaling units, shifters) instead of CLBs. This paper introduces the development of reconfigurable system architecture with a focus on FPDA that integrates different DSP functions like DFT, FFT, DCT, FIR, IIR, and DWT etc. The switching between DSP functions is occurred by reconfiguring the interconnection between CMs. Validation of the proposed architecture has been achieved on Virtex5 FPGA. The architecture provides sufficient amount of flexibility, parallelism and scalability.",
+      "published": "2013-06-01T09:04:40Z",
+      "year": 2013,
+      "doi": null,
+      "arxiv_id": "1306.0089",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/1306.0089",
+        "pdf": "https://arxiv.org/pdf/1306.0089.pdf",
+        "html": "https://arxiv.org/html/1306.0089"
+      },
+      "source": "arxiv",
+      "source_rank": 6,
+      "raw": {
+        "updated": "2013-06-01T09:04:40Z",
+        "category": {
+          "text": null,
+          "term": "cs.AR",
+          "scheme": "http://arxiv.org/schemas/atom"
+        },
+        "arxiv:comment": "8 Pages, 12 Figures, ACM SIGARCH Computer Architecture News. arXiv admin note: substantial text overlap with arXiv:1305.3251",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.AR"
+        },
+        "arxiv:journal_ref": "ACM SIGARCH Computer Architecture News, Volume 41 Issue 2, May 2013, Pages 1-8",
+        "arxiv:doi": "10.1145/2490302.2490304"
+      }
+    },
+    {
+      "paper_id": "2601.18702",
+      "title": "From Fuzzy to Exact: The Halo Architecture for Infinite-Depth Reasoning via Rational Arithmetic",
+      "authors": [
+        "Hansheng Ren"
+      ],
+      "abstract": "The prevailing scaling paradigm of Large Language Models (LLMs) rests on a substrate of \"Fuzzy\" floating-point arithmetic. To mitigate the inherent instability of this approximate foundation, modern architectures have erected a complex scaffolding of structural and numerical heuristics--Complex Residuals, Pre-RMSNorm, Attention Scaling, and Gradient Clipping--consuming significant compute solely to prevent numerical collapse. We propose a paradigm shift to the \"Exact\". We introduce the Halo Architecture, grounded in the Rational Field (Q) and powered by a custom Exact Inference Unit (EIU). To resolve the exponential bit-width growth of rational arithmetic, Halo employs a Dual-Ring Topology that unifies two complementary control mechanisms: (1) The Micro-Ring (Continuum Maintenance), which strictly bounds memory complexity via Diophantine Approximation; and (2) The Macro-Ring (Symbolic Alignment), which enforces logical consistency via periodic state collapse. This stable dual-ring substrate allows for the \"Great Dismantling\" of numerical scaffolding, reducing the Transformer block to its \"Clean\" algebraic form (Tabula Rasa). Furthermore, we verify the \"Efficiency Paradox\": the elimination of gradient noise (sigma -> 0) allows for Macro-Learning Rates, potentially reducing the Total Time-to-Convergence by orders of magnitude. Halo demonstrates that General Intelligence requires the hybridization of continuous fields and discrete chains under a rigorous mathematical framework.",
+      "published": "2026-01-26T17:24:34Z",
+      "year": 2026,
+      "doi": null,
+      "arxiv_id": "2601.18702",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2601.18702",
+        "pdf": "https://arxiv.org/pdf/2601.18702.pdf",
+        "html": "https://arxiv.org/html/2601.18702"
+      },
+      "source": "arxiv",
+      "source_rank": 7,
+      "raw": {
+        "updated": "2026-02-16T07:24:47Z",
+        "category": [
+          {
+            "text": null,
+            "term": "cs.LG",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.AI",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.AR",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "Architecture update: Formalizes the Dual-Ring Topology and the Clean Transformer",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.LG"
+        }
+      }
+    },
+    {
+      "paper_id": "2505.09343",
+      "title": "Insights into DeepSeek-V3: Scaling Challenges and Reflections on Hardware for AI Architectures",
+      "authors": [
+        "Chenggang Zhao",
+        "Chengqi Deng",
+        "Chong Ruan",
+        "Damai Dai",
+        "Huazuo Gao",
+        "Jiashi Li",
+        "Liyue Zhang",
+        "Panpan Huang",
+        "Shangyan Zhou",
+        "Shirong Ma",
+        "Wenfeng Liang",
+        "Ying He",
+        "Yuqing Wang",
+        "Yuxuan Liu",
+        "Y. X. Wei"
+      ],
+      "abstract": "The rapid scaling of large language models (LLMs) has unveiled critical limitations in current hardware architectures, including constraints in memory capacity, computational efficiency, and interconnection bandwidth. DeepSeek-V3, trained on 2,048 NVIDIA H800 GPUs, demonstrates how hardware-aware model co-design can effectively address these challenges, enabling cost-efficient training and inference at scale. This paper presents an in-depth analysis of the DeepSeek-V3/R1 model architecture and its AI infrastructure, highlighting key innovations such as Multi-head Latent Attention (MLA) for enhanced memory efficiency, Mixture of Experts (MoE) architectures for optimized computation-communication trade-offs, FP8 mixed-precision training to unlock the full potential of hardware capabilities, and a Multi-Plane Network Topology to minimize cluster-level network overhead. Building on the hardware bottlenecks encountered during DeepSeek-V3's development, we engage in a broader discussion with academic and industry peers on potential future hardware directions, including precise low-precision computation units, scale-up and scale-out convergence, and innovations in low-latency communication fabrics. These insights underscore the critical role of hardware and model co-design in meeting the escalating demands of AI workloads, offering a practical blueprint for innovation in next-generation AI systems.",
+      "published": "2025-05-14T12:39:03Z",
+      "year": 2025,
+      "doi": null,
+      "arxiv_id": "2505.09343",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2505.09343",
+        "pdf": "https://arxiv.org/pdf/2505.09343.pdf",
+        "html": "https://arxiv.org/html/2505.09343"
+      },
+      "source": "arxiv",
+      "source_rank": 8,
+      "raw": {
+        "updated": "2025-12-23T03:00:00Z",
+        "category": [
+          {
+            "text": null,
+            "term": "cs.DC",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.AI",
+            "scheme": "http://arxiv.org/schemas/atom"
+          },
+          {
+            "text": null,
+            "term": "cs.AR",
+            "scheme": "http://arxiv.org/schemas/atom"
+          }
+        ],
+        "arxiv:comment": "This is the author's version of the work. It is posted here for your personal use. Not for redistribution. The definitive version appeared as part of the Industry Track in Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA '25)",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.DC"
+        },
+        "arxiv:journal_ref": "Proceedings of the 52nd Annual International Symposium on Computer Architecture (ISCA '25), June 2025",
+        "arxiv:doi": "10.1145/3695053.3731412"
+      }
+    },
+    {
+      "paper_id": "2301.07516",
+      "title": "Quality Attributes Optimization of Software Architecture: Research Challenges and Directions",
+      "authors": [
+        "Daniele Di Pompeo",
+        "Michele Tucci"
+      ],
+      "abstract": "The estimation and improvement of quality attributes in software architectures is a challenging and time-consuming activity. On modern software applications, a model-based representation is crucial to face the complexity of such activity. One main challenge is that the improvement of distinctive quality attributes may require contrasting refactoring actions on the architecture, for instance when looking for trade-off between performance and reliability (or other non-functional quality attributes). In such cases, multi-objective optimization can provide the designer with a more complete view on these trade-offs and, consequently, can lead to identify suitable refactoring actions that take into account independent or even competing objectives. In this paper, we present open challenges and research directions to fill current gaps in the context of multi-objective software architecture optimization.",
+      "published": "2023-01-18T13:37:21Z",
+      "year": 2023,
+      "doi": null,
+      "arxiv_id": "2301.07516",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2301.07516",
+        "pdf": "https://arxiv.org/pdf/2301.07516.pdf",
+        "html": "https://arxiv.org/html/2301.07516"
+      },
+      "source": "arxiv",
+      "source_rank": 9,
+      "raw": {
+        "updated": "2023-01-18T13:37:21Z",
+        "category": {
+          "text": null,
+          "term": "cs.SE",
+          "scheme": "http://arxiv.org/schemas/atom"
+        },
+        "arxiv:comment": "4 pages, 1 figure -- 3rd International Workshop on Model-Driven Engineering for Software Architecture (MDE4SA 2023)",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.SE"
+        },
+        "arxiv:journal_ref": "20th International Conference on Software Architecture, ICSA 2023 - Companion",
+        "arxiv:doi": "10.1109/ICSA-C57050.2023.00061"
+      }
+    },
+    {
+      "paper_id": "2301.07500",
+      "title": "Multi-objective Software Architecture Refactoring driven by Quality Attributes",
+      "authors": [
+        "Daniele Di Pompeo",
+        "Michele Tucci"
+      ],
+      "abstract": "Architecture optimization is the process of automatically generating design options, typically to enhance software's quantifiable quality attributes, such as performance and reliability. Multi-objective optimization approaches have been used in this situation to assist the designer in selecting appropriate trade-offs between a number of non-functional features. Through automated refactoring, design alternatives can be produced in this process, and assessed using non-functional models. This type of optimization tasks are hard and time- and resource-intensive, which frequently hampers their use in software engineering procedures. In this paper, we present our optimization framework where we examined the performance of various genetic algorithms. We also exercised our framework with two case studies with various levels of size, complexity, and domain served as our test subjects.",
+      "published": "2023-01-18T13:17:16Z",
+      "year": 2023,
+      "doi": null,
+      "arxiv_id": "2301.07500",
+      "openalex_id": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/2301.07500",
+        "pdf": "https://arxiv.org/pdf/2301.07500.pdf",
+        "html": "https://arxiv.org/html/2301.07500"
+      },
+      "source": "arxiv",
+      "source_rank": 10,
+      "raw": {
+        "updated": "2023-01-18T13:17:16Z",
+        "category": {
+          "text": null,
+          "term": "cs.SE",
+          "scheme": "http://arxiv.org/schemas/atom"
+        },
+        "arxiv:comment": "4 pages, 1 figure, 20th -- IEEE International Conference on Software Architecture - poster track",
+        "arxiv:primary_category": {
+          "text": null,
+          "term": "cs.SE"
+        },
+        "arxiv:journal_ref": "20th International Conference on Software Architecture, ICSA 2023 - Companion",
+        "arxiv:doi": "10.1109/ICSA-C57050.2023.00046"
+      }
+    }
+  ]
+}

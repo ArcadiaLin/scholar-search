@@ -20,6 +20,7 @@ from search_service.providers.base import SearchProvider
 from search_service.schemas import ProviderCapabilities
 
 _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+_ARXIV_NS = {"arxiv": "http://arxiv.org/schemas/atom"}
 _ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}|arxiv:\d{4}\.\d{4,5})", re.IGNORECASE)
 
 
@@ -123,11 +124,15 @@ def _parse_entry(entry: ET.Element, rank: int | None = None) -> SearchResultItem
         urls["pdf"] = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         urls["html"] = f"https://arxiv.org/html/{arxiv_id}"
 
+    journal_ref_el = entry.find("arxiv:journal_ref", _ARXIV_NS)
+    venue = _clean_text(journal_ref_el.text if journal_ref_el is not None else None) or None
+
     return SearchResultItem(
         paper_id=arxiv_id or (id_el.text if id_el is not None else ""),
         title=title,
         authors=authors if authors else None,
         abstract=abstract,
+        venue=venue,
         published=published,
         year=year,
         doi=_extract_doi(entry),
@@ -324,9 +329,15 @@ class ArxivPlugin(SearchProvider):
         finally:
             await self._client.close()
 
-    async def search_native(self, raw_payload: dict[str, Any]) -> list[SearchResultItem]:
+    async def search_native(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
+        """Execute a provider-native arXiv query and return a JSON-serializable dict.
+
+        The arXiv Atom API returns XML; the result is parsed and exposed as a
+        dict so the passthrough endpoint can return JSON.
+        """
         try:
-            return await self._client.native_query(raw_payload)
+            items = await self._client.native_query(raw_payload)
+            return {"results": [item.model_dump() for item in items]}
         finally:
             await self._client.close()
 

@@ -16,7 +16,7 @@ import httpx
 from search_service.exceptions import SourceError
 from search_service.models import SearchResultItem
 from search_service.providers.base import SearchProvider
-from search_service.schemas import ProviderCapabilities
+from search_service.schemas import Author, Paper, ProviderCapabilities
 
 _OPENALEX_ID_PREFIX = "https://openalex.org/"
 _WORK_SELECT = (
@@ -130,6 +130,76 @@ def _parse_work(work: dict[str, Any], rank: int | None = None) -> SearchResultIt
         source="openalex",
         source_rank=rank,
         raw=raw,
+    )
+
+
+def work_to_paper(work: dict[str, Any]) -> Paper:
+    """Convert a raw OpenAlex work object into the unified Paper schema."""
+    raw_id = work.get("id", "")
+    openalex_id = _extract_openalex_id(raw_id)
+    title = work.get("display_name") or work.get("title") or ""
+    abstract = _reconstruct_abstract(work.get("abstract_inverted_index"))
+    doi = work.get("doi")
+    arxiv_id = _extract_arxiv_id(work.get("ids"))
+    publication_date = work.get("publication_date") or str(work.get("publication_year") or "")
+    year = work.get("publication_year")
+    urls = _parse_url(work)
+
+    venue = None
+    primary_location = work.get("primary_location") or {}
+    source = primary_location.get("source") or {}
+    if isinstance(source, dict):
+        venue = source.get("display_name")
+
+    authors = None
+    if work.get("authorships"):
+        authors = [
+            Author(name=name)
+            for name in (_parse_authors(work) or [])
+        ]
+
+    # Bibliometric fields.
+    citation_count = work.get("cited_by_count")
+    normalized_impact = work.get("fwci")
+    citation_percentile = None
+    if (percentile := work.get("citation_normalized_percentile")) and isinstance(percentile, dict):
+        citation_percentile = percentile.get("value")
+    counts_by_year = None
+    if (counts := work.get("counts_by_year")) and isinstance(counts, list):
+        counts_by_year = [
+            {"year": c["year"], "count": c["cited_by_count"]}
+            for c in counts
+            if isinstance(c, dict) and "year" in c and "cited_by_count" in c
+        ]
+
+    # Graph fields.
+    references = work.get("referenced_works")
+    citations = None
+
+    # Quality fields.
+    is_retracted = work.get("is_retracted")
+
+    return Paper(
+        paper_id=doi or arxiv_id or openalex_id,
+        doi=doi,
+        arxiv_id=arxiv_id,
+        openalex_id=openalex_id,
+        title=title,
+        abstract=abstract,
+        authors=authors,
+        venue=venue,
+        published=publication_date if publication_date else None,
+        year=int(year) if isinstance(year, int) else None,
+        urls=urls,
+        citation_count=int(citation_count) if isinstance(citation_count, int) else None,
+        normalized_impact=float(normalized_impact) if isinstance(normalized_impact, (int, float)) else None,
+        citation_percentile=float(citation_percentile) if isinstance(citation_percentile, (int, float)) else None,
+        counts_by_year=counts_by_year,
+        references=references,
+        citations=citations,
+        is_retracted=bool(is_retracted) if is_retracted is not None else None,
+        sources=["openalex"],
+        raw=work,
     )
 
 
@@ -256,6 +326,15 @@ class OpenAlexClient:
         params.setdefault("select", _WORK_SELECT)
         return await self._request("GET", "works", params)
 
+    async def query(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Execute a provider-native query against any OpenAlex endpoint.
+
+        The caller is responsible for providing a valid OpenAlex endpoint path
+        and parameter set. Credentials and polite-pool markers are injected
+        automatically.
+        """
+        return await self._request("GET", endpoint, params)
+
     async def lookup_work(self, work_id: str) -> dict[str, Any] | None:
         """Fetch a single work by OpenAlex ID (short or full URI)."""
         short_id = _extract_openalex_id(work_id) or work_id
@@ -366,6 +445,13 @@ class OpenAlexPlugin(SearchProvider):
     async def search_native(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
         try:
             return await self._client.native_query(raw_payload)
+        finally:
+            await self._client.close()
+
+    async def query(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Execute a native query against any OpenAlex endpoint."""
+        try:
+            return await self._client.query(endpoint, params)
         finally:
             await self._client.close()
 
