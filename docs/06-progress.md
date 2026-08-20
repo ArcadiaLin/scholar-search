@@ -9,7 +9,7 @@
 | Stage | 内容 | 状态 | commit | 备注 |
 | --- | --- | --- | --- | --- |
 | S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
-| S1 | extension 骨架与最短链路 | DONE | `PENDING_S1` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
+| S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
 | S2 | 核心检索工具 | TODO | | |
 | S3 | search profile：工具集收紧 | TODO | | |
 | S4 | 概念到实现映射 + Preference 载体 | TODO | | |
@@ -120,7 +120,7 @@
      `cd src/search-service && uv run pytest -q` → `52 passed`
      （必须先 unset `all_proxy`，见 E-04。）
 
-- commit: `PENDING_S1`
+- commit: `6414773`
 
 ## 决策记录
 
