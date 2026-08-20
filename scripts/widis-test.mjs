@@ -13,7 +13,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const widisRoot = join(repositoryRoot, "widis");
@@ -47,7 +47,10 @@ if (testFiles.length === 0) {
 process.stdout.write(`Running ${testFiles.length} extension test files\n`);
 const result = spawnSync(
 	process.execPath,
-	["--import", tsxLoader, "--test", ...testFiles.map((file) => relative(repositoryRoot, file))],
+	// `--import` takes a module specifier, not a path: an absolute Windows path
+	// parses as the `d:` scheme and the ESM loader rejects it. A file:// URL is
+	// the one spelling both platforms accept.
+	["--import", pathToFileURL(tsxLoader).href, "--test", ...testFiles.map((file) => relative(repositoryRoot, file))],
 	{ cwd: repositoryRoot, env: process.env, stdio: "inherit" },
 );
 if (result.error) {

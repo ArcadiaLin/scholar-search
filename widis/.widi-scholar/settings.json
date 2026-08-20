@@ -24,7 +24,7 @@
 	"npmCommand": ["npm"],
 	"packages": [],
 	"extensions": [],
-	"enabledExtensions": [],
+	"enabledExtensions": ["scholar-search"],
 	"extensionDivisions": {},
 	"skills": [],
 	"prompts": [],
