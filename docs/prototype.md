@@ -20,6 +20,9 @@
 上游文档若与本文冲突，以上游的概念与约束为准；本文只负责在这些约束下给出一个能跑的实例。
 换掉本文的全部内容，上游文档应当依然成立——这是判断抽象是否做对的标准。
 
+`experiments.md` 是本文的下游：它规划待检验的命题、消融轴与等算力协议。
+本文 §6.5 定义的 B / J / P 三条轴由它统筹执行顺序，M 轴（在线拓扑）在那里定义。
+
 排序算法主要提炼自两处：`metascientist-rerank-design.md`（从另一项目的 CiteFlow 实现提炼），
 以及 BIR（Bibliometric-enhanced Information Retrieval）方向的公开工作。
 评价协议提炼自 AstaBench / PaperFindingBench 的实现
@@ -43,6 +46,12 @@ L3c（全文判别）留接口默认关闭。
 
 Semantic Scholar 暂不纳入：无 key 时只有 `/search/bulk` 与 `/{id}/citations` 稳定可用，
 其余端点持续 429，申请周期不可控。**[实测]** 代价见 §10.1。
+
+![原型视图：Agentic Search Prototype P0](./assets/agentic-search-prototype.png)
+
+上图是 P0 的**原型视图**：`design.md` 的架构被落到具体的工具名、provider、算法与训练环上。
+蓝色为 Agent 执行、绿色为 Service 管线、琥珀为 Reviewer 旁路、紫色为偏好学习环。
+图中每一项都在后文展开：数据源见 §2、排序算法见 §3、LLM 判别见 §4、训练见 §5、工具集见 §7。
 
 ---
 

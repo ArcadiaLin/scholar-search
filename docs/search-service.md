@@ -44,6 +44,14 @@ Preference Persistence。
 两个实际后果：**排序策略可以被训练，但训练发生在离线，不在 episode 内**；
 **智能计算可以发生在 Service 内，但它必须是 $y=f(x)$ 形态的 worker，而不是第二个决策主体**。
 
+![实现视图：Search Service P0 的工具、算法与流程图](./assets/search-service-pipeline.png)
+
+上图给出本文各节在 P0 上的一次落地：三种调用模式（§2）共享同一套治理，
+aggregated 模式串起 probe → recall → align → enrich → rank → expand → select 的管线（§6），
+分级排序栈 L0–L3（§7.5）产出确定性输出契约（§7.6），底部是离线回放与参数搜索（§7.7–§7.8）。
+**图中的具体 provider、公式、特征与参数取值（OpenAlex/arXiv、RRF $\kappa=60$、$N$ 的取值等）
+属于 `prototype.md` 的实例化，不构成本文的约束**；本文只约束模式、边界与机制本身。
+
 ---
 
 ## 2. 三种调用模式

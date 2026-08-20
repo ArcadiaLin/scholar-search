@@ -3,7 +3,8 @@
 > 系统设计主文档。本文只描述模块、契约与约束的**行为抽象**。
 > 研究理念见 `agentic_search_preference_reviewer_research_design.md`；
 > 检索能力层的机制见 `search-service.md`；
-> 具体的数据源、算法、工具名、指标与参数见 `prototype.md`。
+> 具体的数据源、算法、工具名、指标与参数见 `prototype.md`；
+> 待检验的命题、消融轴与等算力协议见 `experiments.md`。
 
 ## 1. 设计目标与总体判断
 
@@ -32,6 +33,13 @@
 其中，Agent 负责需要**独立状态**的决策，Service 负责可测试的检索能力，
 Preference Persistence 负责跨任务记忆。三者职责不能互相替代。
 边界不在"谁能调用语言模型"，而在"谁持有跨调用的状态"（§2.2、§4）。
+
+![设计视图：偏好优化的双上下文检索架构](./assets/agentic-search-design.png)
+
+上图是本文的**设计视图**：只画行为模块、状态边界与两个时间尺度，不含任何实现算法。
+实线为执行流，虚线为 Reviewer 旁路，紫线为跨 episode 的偏好更新（$\Delta PH_k$ 下一 episode 生效）。
+对应的实例化视图见 `prototype.md`，检索能力层的展开见 `search-service.md`；
+控制流的规范表述以 §8.2–§8.4 的 Mermaid 与本文公式为准。
 
 ## 2. 变量定义与数据契约
 
@@ -660,11 +668,16 @@ sequenceDiagram
 
 ### 8.5 渲染版
 
-![架构图](./assets/figure1.png)
+![设计视图：偏好优化的双上下文检索架构](./assets/agentic-search-design.png)
 
-生成图适合展示和汇报，它省略了版本下标 $k$ 与 advice gate，并把 $PH$ 画成单个模块。
-由于生成式图片可能在箭头连接上产生轻微歧义，
-**论文和实现中的规范逻辑以 §8.2–§8.4 的 Mermaid 与本文公式为准。**
+即 §1 的总览图，适合展示和汇报：它完整保留了版本下标 $k$、advice gate，
+以及 $PH_k = \langle NP_k, HP_k \rangle$ 的内部结构，
+与 §8.1–§8.4 的三种表述（ASCII、Mermaid、时序）指向同一套控制流。
+**论文和实现中的规范逻辑仍以 §8.2–§8.4 的 Mermaid 与本文公式为准**——
+图面为可读性做了取舍，例如未逐条画出 §5.4 的 Reviewer 工具集。
+
+早期的生成式架构图存档于 `assets/archive/figure1.png`，不再随文档更新：
+它省略了版本下标 $k$ 与 advice gate，并把 $PH$ 画成单个模块，已不反映当前设计。
 
 ## 9. 边界、可观测性与实现原则
 
