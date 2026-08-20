@@ -1,0 +1,43 @@
+# Scholar Search Service configuration.
+# Sensitive values can be left empty here and provided via environment variables.
+
+service:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "info"
+  default_top_k: 20
+  default_timeout_ms: 15000
+
+cache:
+  ttl_seconds: 300
+
+plugins:
+  openalex:
+    enabled: true
+    # Leave empty to read from OPENALEX_API_KEY environment variable.
+    api_key: ""
+    # Leave empty to read from OPENALEX_MAILTO environment variable.
+    mailto: ""
+    base_url: "https://api.openalex.org"
+    timeout: 30.0
+    max_retries: 3
+    per_page: 100
+    rate_limit_rps: 10.0
+
+  arxiv:
+    enabled: true
+    base_url: "http://export.arxiv.org/api/query"
+    timeout: 30.0
+    max_retries: 2
+    # arXiv polite usage: ~1 request per 3 seconds.
+    rate_limit_rps: 0.33
+
+  serper:
+    enabled: true
+    # Leave empty to read from SERPER_API_KEY environment variable.
+    api_key: ""
+    base_url: "https://google.serper.dev"
+    timeout: 30.0
+    max_retries: 2
+    rate_limit_rps: 1.0
+    query_template: "{query} filetype:pdf OR arxiv.org OR doi.org"
