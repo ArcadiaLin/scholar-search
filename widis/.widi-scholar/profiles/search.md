@@ -11,6 +11,7 @@ whenToUse: |
   commands, or touch the repository, and it cannot be asked to.
 persist: true
 tools: [list_providers, search_metadata, get_paper, provider_query]
+projectContext: [preference/np-agent.md]
 includeCwd: false
 skillsListing: false
 ---

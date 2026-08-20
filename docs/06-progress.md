@@ -12,7 +12,7 @@
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` | 正文只放 $SP_M$ 静态部分，检索策略留给 S5 |
-| S4 | 概念到实现映射 + Preference 载体 | TODO | | |
+| S4 | 概念到实现映射 + Preference 载体 | DONE | `PENDING_S4` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | TODO | | |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
 | S7 | 其余检索工具 | TODO | | |
@@ -290,6 +290,82 @@
   `search.md` 没有触发。根因是 U-02，未修。
 
 - commit: `8bd31a4`
+### 2026-08-20 — S4
+
+- 做了：
+  - `docs/07-widi-mapping.md`：`06-widi-scholar-roadmap.md` §1.2 那张五行摘要表的
+    展开版。每个概念的实际路径、为什么这样映射、以及**当下真实状态**
+    （"已落地/一半/未落地"写的是实话，不是计划）。
+  - `widis/.widi-scholar/preference/np-agent.md`：$NP_k^{agent}$ 的载体，版本 0。
+  - `widis/.widi-scholar/preference/README.md`：布局与版本约定（不进任何上下文）。
+  - `profiles/search.md` 增加 `projectContext: [preference/np-agent.md]`。
+
+- 本 stage 只建**载体与版本约定**，条目内容留给 S5（路线图要求）。
+  所以 `np-agent.md` 的版本 0 是"载体已存在、条目为空集"，
+  文件里明确写了这就是消融实验的"全关"基线。
+
+- 版本约定（详见 `preference/README.md`）：
+  - 版本号是正文第一行的 `<!-- np-version: k -->`，单调整数，从 0 开始；
+  - 每次改条目 +1，单独一个 commit，message 首行含 `[NP v<k>]`；
+  - **版本存储就是 git，没有第二份**：回放是
+    `git show <commit>:widis/.widi-scholar/preference/np-agent.md`，
+    比较两版是 `git diff <c1> <c2> -- <path>`。
+    这套约定要保住的性质是"第 2 版和第 3 版差在哪"必须一个 `git diff` 就能回答——
+    这也正是载体是 markdown 而不是序列化状态的理由。
+  - 用 HTML 注释而不是 YAML frontmatter 放版本号：这个文件会被整体注入
+    系统提示词，frontmatter 会变成一段像元数据的噪音。
+
+- 映射文档显式回答了路线图点名的三个问题：
+  1. **为什么 Preference 不是代码模块**（§2.4）：读取路径（`projectContext`）
+     与版本管理（git）都已存在，再写模块是重做一遍且做得更差；
+     而且经过代码序列化后，"两版差在哪"就不再是 `git diff` 能回答的问题，
+     $PH_k$ 的可审计性就没了。
+  2. **为什么 Evidence Store 在 Python 侧**（§3.2）：extension 与 Agent 同进程，
+     它持有的候选集迟早会被格式化进工具输出，而 `design.md` §4.1 第一条要求
+     "Agent 不在上下文里搬运候选集"——S2 的 `PaperSummary` 刻意丢掉的
+     `raw`/`references`/`counts_by_year` 必须有地方存，而那个地方不能是 extension。
+     另外排序去重是领域算法（`AGENTS.md` §3.2 不该在 extension 里），
+     且它的账目必须能挂进 `SearchState` 才进得了 $\bar{\tau}_t$。
+     顺带澄清一个易误读点：§4 说"Service 不持有独立状态"指的是**跨 episode**
+     的决策状态，不是禁止一次 episode 内累积证据。
+  3. **Reviewer 用 observer 还是 subagent**（§3.4）：**两个都用，因为不是同一层面的选项。**
+     Reviewer 本体必须是 subagent（要模型、要自己的上下文窗口，observer 是个函数装不下）；
+     observer 是喂给它的传输层。关键在于**由 extension 而不是 Main 来 spawn**：
+     WIDI 的 `ExtensionActions` 有 `spawnAgent()` 与 `prompt(text, {target})`，
+     所以 extension 能自己起 Reviewer 并投递 $\bar{\tau}_t$，而
+     `profiles/search.md` 的 `tools:` 里没有 `spawn_agent` 也没有 `send_message`，
+     Main **结构上**无法向它求助——"旁路"不靠提示词里的禁令维持。
+     记下了两个被否决的方案：把 Reviewer 做成 Main 的工具（违反旁路，
+     介入率变成内生变量），以及只用 observer 在里面直接调模型
+     （绕开 agent runtime，Reviewer 的上下文/预算/轨迹都不在任何 session 里，
+     而 $C^R_t \neq C^M_t$ 恰恰需要它**是**一个有 session 的 agent 才能被证明）。
+
+- 映射文档还集中列了**故意没有对应代码模块**的概念（§4），
+  以及在 §3.1 记下一个当前缺口，免得被当成已完成：
+  `config.yaml` 里还没有"按 $\theta^S_k$ 禁用某个字段"的开关，
+  所以 `list_providers` 现在返回的是 provider 全集字段，
+  不是 `prototype.md` §7.1 要求的"当前 $\theta$ 下实际可用的子集"。
+
+- 关于改动了 S3 的产出：`profiles/search.md` 加 `projectContext` 是路线图 S4
+  落点里明写的要求，不是回头修 S3。除这一行外没动 S3 的任何内容。
+
+- 验收（实际命令与输出）：
+  1. profile 能加载：`inspect` → `profile: {"id":"search",...}`，
+     `toolNames` 仍是那四个检索工具（`projectContext` 不影响工具集）。
+  2. `projectContext` 内容确实进了上下文。提问刻意禁止检索：
+     "不要搜索任何东西，只根据你自己的上下文回答：策略先验文件写了什么？
+     逐字引用它的 np-version，并说明当前生效几条策略。"
+     → `run_summary`: `tools: {calls:0, failed:0, byName:{}}`,
+       `providerErrors: 0`
+     模型回答：`np-version: 0`（并注明是从 `<!-- np-version: 0 -->` 逐字引用）、
+     `Strategy entries in force: 0`，还原文引了"本版没有任何条目……
+     这是消融实验的'全关'基线"那一句。
+     **0 次工具调用**是这条验收的关键：内容只能来自注入的上下文。
+  3. 启动诊断里没有 `resource.context_file.*` 相关告警，
+     说明 `preference/np-agent.md` 这个相对路径被正确解析到 agent dir 下。
+
+- commit: `PENDING_S4`
+
 
 
 
