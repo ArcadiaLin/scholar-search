@@ -13,7 +13,7 @@
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
-| S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `PENDING_S5` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
+| S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `9bec91a` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
@@ -478,7 +478,7 @@ Find me the closely related literature. Nothing published after 2024-06-30."
 在 S7 才注册——也就是说当前有三分之一的条目根本没有可作用的工具。
 这是路线图线性依赖假设的一处漏洞，不是执行上的失误，但它确实影响验收能不能成立。
 
-- commit: `PENDING_S5`
+- commit: `9bec91a`
 
 
 
