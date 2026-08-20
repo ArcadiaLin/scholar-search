@@ -26,6 +26,8 @@
  * in the pinned version).
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
 	EXTENSION_API_VERSION,
 	type ExtensionDefinition,
@@ -40,6 +42,7 @@ import {
 	type ServiceClient,
 	ServiceRequestError,
 } from "./core/service-client.ts";
+import { createTraceCollector, type PublicSearchTrace, type TraceCollector } from "./core/trajectory.ts";
 
 /**
  * Tools bound their own output size: a candidate list or a capability table that
@@ -217,9 +220,72 @@ function formatSearchState(state: SearchStateRecord): string {
 	return lines.join("\n");
 }
 
+export const TRACE_DIR_ENV_VAR = "SCHOLAR_TRACE_DIR";
+/** Archived traces are one of the three things allowed to outlive an episode (`search-service.md` §5.3). */
+const DEFAULT_TRACE_SUBDIR = join("runs", "trajectories");
+
+function resolveTraceDir(env: Readonly<Record<string, string | undefined>>, cwd: string): string {
+	const configured = env[TRACE_DIR_ENV_VAR];
+	if (typeof configured === "string" && configured.trim() !== "") return configured.trim();
+	return join(cwd, DEFAULT_TRACE_SUBDIR);
+}
+
+/**
+ * Write the trace out where a human or a Reviewer can read it.
+ *
+ * Deliberately not a tool: the Main Agent must not be able to read its own
+ * public trace, or "what the Reviewer can see" becomes something the agent can
+ * manage. The Reviewer channel that consumes this is S8.
+ */
+async function writeTrace(trace: PublicSearchTrace, cwd: string): Promise<string | undefined> {
+	try {
+		const directory = resolveTraceDir(process.env, cwd);
+		await mkdir(directory, { recursive: true });
+		const path = join(directory, `${trace.agentId}.json`);
+		await writeFile(path, `${JSON.stringify(trace, null, 2)}\n`, "utf8");
+		return path;
+	} catch {
+		// A trace that cannot be written must not break the search it describes.
+		return undefined;
+	}
+}
+
 const extension: ExtensionDefinition = {
 	apiVersion: EXTENSION_API_VERSION,
 	activate: (api) => {
+		// One collector per agent: the trace is an episode-scoped artefact, and an
+		// agent tree can hold several agents at once.
+		const collectors = new Map<string, TraceCollector>();
+		const collectorFor = (agentId: string): TraceCollector => {
+			const existing = collectors.get(agentId);
+			if (existing) return existing;
+			const created = createTraceCollector({ agentId, profileId: api.profileId });
+			collectors.set(agentId, created);
+			return created;
+		};
+
+		// $\bar{\tau}_t$ is built by filtering this stream, never by transcribing it.
+		// `core/trajectory.ts` holds the allow-list; the handler only routes.
+		api.observe("agent_harness_event", (event) => {
+			collectorFor(event.agentId).record(event.event);
+		});
+
+		// An idle agent has finished its turn, which is when the trace is worth
+		// publishing. Emitted on the bus for the Reviewer channel and written to
+		// disk for a human to check.
+		api.observe("agent_idle", async (event, context) => {
+			const collector = collectors.get(event.agentId);
+			if (!collector) return;
+			const trace = collector.snapshot();
+			if (trace.calls.length === 0) return;
+			await writeTrace(trace, process.cwd());
+			try {
+				await context.actions.emitExtensionEvent("scholar-search:trace", JSON.parse(JSON.stringify(trace)));
+			} catch {
+				// The bus having no listener yet is the normal case until S8.
+			}
+		});
+
 		api.registerTool({
 			name: "list_providers",
 			label: "List Providers",

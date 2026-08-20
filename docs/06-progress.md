@@ -14,7 +14,7 @@
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `9bec91a` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
-| S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
+| S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `PENDING_S6` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
 | S9 | RPC 评测入口 | TODO | | |
@@ -479,6 +479,71 @@ Find me the closely related literature. Nothing published after 2024-06-30."
 这是路线图线性依赖假设的一处漏洞，不是执行上的失误，但它确实影响验收能不能成立。
 
 - commit: `9bec91a`
+### 2026-08-20 — S6
+
+- 做了：
+  - `core/trajectory.ts`：$\bar{\tau}_t$ 的构造器，**写成过滤器而不是记录器**。
+    只有 `COLLECTED_EVENTS = ["tool_execution_start", "tool_execution_end"]`
+    这两种事件能贡献内容，其余一概返回 `false`。
+    用白名单而不是黑名单：黑名单会让上游新增的事件类型默认泄漏，
+    而必须永不泄漏的东西恰恰是上游那条流的主要成分。
+  - `index.ts`：`api.observe("agent_harness_event", ...)` 喂给 collector，
+    `api.observe("agent_idle", ...)` 时导出——写文件到 `runs/trajectories/<agentId>.json`
+    （`runs/` 已在 `.gitignore`，且归档的 $\bar{\tau}_t$ 是 `search-service.md` §5.3
+    允许离开 episode 的三样东西之一），并同时 `emitExtensionEvent("scholar-search:trace", ...)`
+    供 S8 的 Reviewer 通道消费。
+  - `tests/trajectory.test.ts`：15 条。
+
+- **刻意不做成工具**。Main Agent 不能读自己的公开轨迹——否则"Reviewer 能看见什么"
+  就变成了 Main 可以管理的东西。导出走文件与事件总线，不进 $T^M$。
+
+- 两个容易做错的性质都有测试钉住：
+  - **事件无顺序保证**（`SKILL.md` §6）：记录按 `toolCallId` 归并，
+    `end` 先于 `start` 到达也能合成同一条调用。有一条测试专门反向投递两个半事件，
+    断言结果是 1 条调用而不是 2 条。
+  - **有界**：`maxCalls` / `maxArgChars` 上限，且**超限要报告**——
+    `budget.droppedCalls` 不为 0 时消费者才知道这条轨迹不完整。
+    静默截断会被读成"完整轨迹"。
+
+- Service 侧不需要改：S2 已经在产出 `SearchState`
+  （`issued_queries` / `selected_sources` / `filters` / `candidate_counts` / `failures`），
+  collector 直接从工具结果的 `details.searchState` 取。
+
+- 验收（实际命令与输出）：
+  1. `npm run test:widis` → `# tests 102 / # pass 102 / # fail 0`（本 stage 新增 15 条）。
+  2. `tsgo` 退出 0；`biome check --error-on-warnings` 对 7 个非 fixture 文件
+     `No fixes applied.`
+  3. 跑一次真实检索并人工核对导出的 `runs/trajectories/search-whr3.json`——
+     路线图点名的四项**逐项都在**：
+     - **子查询**：9 条，跨整个 episode 收齐并去重
+       （`["message passing GNNs molecular property", "QM9 benchmark molecule property prediction", ...]`）
+     - **候选计数**：`{"recalled":589,"returned":110}`
+     - **失败分类**：`[{"source":"openalex","errorType":"rate_limit",
+       "message":"query 'message passing GNNs molecular property': OpenAlex rate limit exceeded"}, ...]`
+       ——分类是 Service 给的 `errorType`，且失败信息里带着是**哪个子查询**失败的
+     - **预算消耗**：`{"totalCalls":9,"failedCalls":0,
+       "callsByTool":{"search_metadata":4,"list_providers":1,"provider_query":4},
+       "droppedCalls":0}`
+     另有每次调用的 `searchState.issuedQueries` 逐条列出 (provider, query) 组合。
+  4. **私有推理不在**，逐项 grep 导出的轨迹文件：
+     `thinking` 0 次、`reasoning` 0 次、`assistantMessageEvent` 0 次、
+     `message_update` 0 次、`thinkingSignature` 0 次、`"role":"assistant"` 0 次、
+     `text_delta` 0 次。
+     顶层键只有 `agentId, profileId, subqueries, calls, budget, candidateCounts, failures`；
+     每条调用的键只有 `toolCallId, toolName, args, failed, searchState, seq`。
+     另有单元测试投递 9 种带推理内容的事件（thinking_delta / thinking_end /
+     text_delta / message_start / message_end / turn_end / agent_end / ...），
+     断言全部被拒且轨迹里搜不到那段文本；
+     还有一条测试在**被收集的**事件上挂了额外的 `reasoning` 与 thinking 字段，
+     断言只有白名单里的字段被复制。
+
+- 一个运行期观察（不是缺陷）：这一天的多次真实运行之后，
+  OpenAlex 开始频繁返回 `rate_limit`。轨迹把它如实分类记下了，
+  这正是失败分类字段存在的意义——覆盖变差的原因是限流而不是文献少，
+  Reviewer 需要能区分这两者。
+
+- commit: `PENDING_S6`
+
 
 
 
