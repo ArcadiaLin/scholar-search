@@ -8,7 +8,7 @@
 
 | Stage | 内容 | 状态 | commit | 备注 |
 | --- | --- | --- | --- | --- |
-| S0 | 分支、进度骨架、vllm 接入 | DONE | `28c05d9` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
+| S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
 | S1 | extension 骨架与最短链路 | TODO | | |
 | S2 | 核心检索工具 | TODO | | |
 | S3 | search profile：工具集收紧 | TODO | | |
@@ -62,7 +62,7 @@
   - `model.default_unavailable`：默认模型 `kimi-coding/k3` 未注册/无凭据。
     这正是 S0 不改默认值的后果，属预期；用户在 TUI 里 `/model` 切换即可。
 
-- commit: `28c05d9`
+- commit: `a069f87`
 
 ## 决策记录
 
@@ -142,3 +142,13 @@ Checked 4 files in 45ms. Found 4 errors.     # package.json + 三个 scripts/*.m
 无关的巨大 diff，破坏 §1.4 的单 stage 单 commit 与 cherry-pick 语义。
 建议由用户单独决定；在那之前，判断"格式检查是否因本次改动变红"要用
 LF 归一化后的单文件 biome 结果。
+
+### D-03 — commit hash 由紧随其后的 docs-only commit 补录
+
+把 stage 的 commit hash 写进该 stage 自己的 commit 里是不收敛的：
+`--amend` 改文档就换 hash，换 hash 又让文档过期。
+所以约定：stage commit 先落地，紧接着一个只改 `docs/06-progress.md` 的
+`[S<n>] progress: 补录 commit hash` commit 把 hash 填上。
+
+这不破坏 §5 的部分采纳：补录 commit 只碰进度文档，
+`cherry-pick` 某个 stage 时带上或不带上它都不影响该 stage 的产出。
