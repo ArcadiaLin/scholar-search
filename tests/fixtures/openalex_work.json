@@ -1,0 +1,33 @@
+{
+  "id": "https://openalex.org/W2741809807",
+  "display_name": "The state of OA: a large-scale analysis of the prevalence and impact of Open Access articles",
+  "title": "The state of OA: a large-scale analysis of the prevalence and impact of Open Access articles",
+  "publication_year": 2018,
+  "doi": "https://doi.org/10.7717/peerj.4375",
+  "abstract_inverted_index": {
+    "Background": [0],
+    "Open": [1, 10],
+    "Access": [2, 11],
+    "articles": [3, 12]
+  },
+  "ids": {
+    "openalex": "https://openalex.org/W2741809807",
+    "doi": "https://doi.org/10.7717/peerj.4375",
+    "mag": "2741809807",
+    "pmid": "29844946",
+    "pmcid": "PMC5968230"
+  },
+  "open_access": {
+    "is_oa": true,
+    "oa_status": "gold",
+    "oa_url": "https://peerj.com/articles/4375.pdf"
+  },
+  "cited_by_count": 1234,
+  "authorships": [],
+  "primary_location": null,
+  "referenced_works": [
+    "https://openalex.org/W1234567890",
+    "https://openalex.org/W0987654321"
+  ],
+  "cited_by_api_url": "https://api.openalex.org/works?filter=cites:W2741809807"
+}

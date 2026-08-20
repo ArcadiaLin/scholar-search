@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from src.retriever.bm25 import BM25Ranker
 from src.retriever.embedding import EmbeddingRanker
+from src.retriever.openalex import OpenAlexClient, OpenAlexSearchResult
 from src.retriever.provider import EmbeddingProvider, RemoteEmbeddingProvider
 from src.retriever.ranker import rank
 
@@ -20,6 +21,8 @@ __all__ = [
     "BM25Ranker",
     "EmbeddingProvider",
     "EmbeddingRanker",
+    "OpenAlexClient",
+    "OpenAlexSearchResult",
     "RemoteEmbeddingProvider",
     "rank",
 ]
