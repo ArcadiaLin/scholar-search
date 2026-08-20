@@ -17,8 +17,11 @@ dev = [
     "huggingface-hub>=1.0,<2",
     "pyarrow>=25.0.1",
     "pytest>=8.4,<10",
+    "pytest-asyncio>=1.4.0",
     "pyyaml>=6,<7",
+    "respx>=0.23.1",
     "ruff>=0.12,<1",
+    "tqdm>=4.70.0",
 ]
 
 [tool.uv]

@@ -1,4 +1,14 @@
-"""Local re-ranking support for academic paper candidates."""
+"""Local re-ranking support for academic paper candidates.
+
+.. deprecated::
+
+    The ranking utilities in this package have been migrated to
+    ``src/search_service/features/`` and ``src/search_service/rank/`` as part
+    of the Search Service consolidation. New code should import from
+    ``search_service.rank`` and ``search_service.features`` instead.
+    This package is kept temporarily for backward compatibility and will be
+    removed once all callers are migrated.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +18,7 @@ from dotenv import load_dotenv
 
 from src.retriever.bm25 import BM25Ranker
 from src.retriever.embedding import EmbeddingRanker
+from src.retriever.openalex import OpenAlexClient, OpenAlexSearchResult
 from src.retriever.provider import EmbeddingProvider, RemoteEmbeddingProvider
 from src.retriever.ranker import rank
 
@@ -20,6 +31,8 @@ __all__ = [
     "BM25Ranker",
     "EmbeddingProvider",
     "EmbeddingRanker",
+    "OpenAlexClient",
+    "OpenAlexSearchResult",
     "RemoteEmbeddingProvider",
     "rank",
 ]
