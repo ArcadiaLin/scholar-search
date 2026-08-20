@@ -21,7 +21,11 @@
 换掉本文的全部内容，上游文档应当依然成立——这是判断抽象是否做对的标准。
 
 `experiments.md` 是本文的下游：它规划待检验的命题、消融轴与等算力协议。
-本文 §6.5 定义的 B / J / P 三条轴由它统筹执行顺序，M 轴（在线拓扑）在那里定义。
+本文 §6.5 定义的 B / E / J / P 四条轴由它统筹执行顺序，M 轴（在线拓扑）在那里定义。
+
+`05-skill-decomposition.md` 是本文 §7.3 的穷尽版：
+它把参照实现 MetaScientist 的 skill 文本逐条拆到本架构的各层，
+是 $NP_0^{agent}$ 条目列表与 $HP_0$ 初值的直接来源。
 
 排序算法主要提炼自两处：`metascientist-rerank-design.md`（从另一项目的 CiteFlow 实现提炼），
 以及 BIR（Bibliometric-enhanced Information Retrieval）方向的公开工作。
@@ -36,7 +40,8 @@ Main Search Agent 的策略先验初值提炼自同一项目的 citeflow skill�
 
 ## 1. 原型 P0 的范围
 
-**接入**：OpenAlex 与 arXiv 两个 provider，其余一律不做。
+**接入**：OpenAlex（主源）、arXiv（补充源）、OpenCitations（引文边的补充/兜底源），
+其余一律不做。三者的角色分派见 §2.1，降级链机制见 `search-service.md` §3.4。
 **调用模式**：aggregated、passthrough、rank-only 三种全部提供——
 passthrough 是验证 provider 抽象是否成立的关键，不能省。
 **rerank**：L0–L2 全部实现；L3a（cross-encoder）与 L3b（LLM judge on abstract）实现；
@@ -73,9 +78,39 @@ Semantic Scholar 暂不纳入：无 key 时只有 `/search/bulk` 与 `/{id}/cita
 | `text.abstract` | ✔ 倒排索引需重建 | ✔ `summary`，作者原文 |
 | `text.fulltext` | 部分 | ✔ PDF |
 
-**角色**：OpenAlex 是主召回、计量指标与引文图的唯一来源；
+**角色**：OpenAlex 是主召回与计量指标的主源；
 arXiv 是时效与版本、作者自报 category、精确摘要、`comment` 中 venue 信号的补全源，
-**不做主召回**。
+**不做主召回**；OpenCitations 只在引文边这一项能力上作为补充/兜底源，
+不参与召回、不提供计量指标、不提供文本。
+
+#### OpenCitations 的角色与待测项 **[待验证]**
+
+引文边是本原型对 OpenAlex 依赖最重、也最脆弱的一环：§2.2 实测 preprint 的
+`referenced_works` 覆盖仅 39%，而 §3.4 的领域内引用集中度、BC/CC 全部建立在这些边上。
+边缺失时特征不是变差，是**整族缺失**——这正是需要一个独立来源的原因。
+
+选它而不选 Semantic Scholar 的理由：它以 DOI 为主键、无需申请即可访问，
+不存在 §1 记录的 S2 那种"申请周期不可控 + 端点持续 429"的问题。
+它与 OpenAlex 的生成机制不同（基于 Crossref 存缴的开放引用 vs OpenAlex 自建索引），
+因此两者的缺失大概率不同源——这是补充源有价值的前提，也是必须实测的第一件事。
+
+接入前必须测的四项，任一不达标即退回两源方案：
+
+```text
+1. 边覆盖增量   OpenAlex 缺边的样本里，OpenCitations 能补上多少
+2. 重叠一致性   两者都有边时的一致率；系统性分歧意味着主键或版本合并有误
+3. preprint 覆盖 §2.2 的 39% 缺口是否被实质改善——这是接它的主要动机
+4. 限流与延迟   无 token 时的实际速率上限，以及它对 expand 阶段延迟的影响
+```
+
+**主键风险**：OpenCitations 以 DOI 为中心，而 §2.2 已记录部分 arXiv DOI 会被
+OpenAlex 从 works 主键降级（`10.48550/arxiv.1706.03762` 返回 404）。
+无 DOI 或 DOI 不被识别的记录**拿不到任何 OpenCitations 边**，
+因此它只能是补充源，不能替代 OpenAlex 作为图能力的主源。
+
+**评价上的强制要求**：接入前后必须分别报告图特征的缺失率与 B4 结果。
+补上的边若只改善覆盖而不改善排序（E3 对 E2），按 §6.5 E 轴的四种组合处置，
+不得只看 top-K 就判定接入无效。
 
 ### 2.2 合并主键与字段路由 **[实测]**
 
@@ -120,6 +155,7 @@ arXiv category 丢失、topic 由分类器猜测（实测 score 0.36）。薄记
              arXiv 补 category / 版本 / comment / 精确摘要
 (4) rank     L0 → L1 RRF → L2 门控加权 → L3a/L3b（§3、§4）
 (5) expand   OpenAlex 出边 + cites 反查，深度 1，扇出上限 20
+             边缺失且有可用 DOI 时按 search-service.md §3.4 的降级链补 OpenCitations
 (6) select   预算内截断
 ```
 
@@ -135,6 +171,7 @@ arXiv category 丢失、topic 由分类器猜测（实测 score 0.36）。薄记
 | OpenAlex 单实体 | 免费不限次 | 富集与取边的主力 |
 | OpenAlex 瞬时速率 | 余额充足时仍会 429 | 必须退避重试 |
 | arXiv | 必须 https（http 返回 0 字节），间隔 ≥3s，单次 ≤2000 条 | 补全源，串行低频 |
+| OpenCitations | 无需 key；实际速率上限与分页行为**待实测** | 仅在 OpenAlex 边缺失时触发，计入 expand 阶段预算 |
 
 ---
 
@@ -458,6 +495,44 @@ provider 支持时固定 seed。残余非确定性用 Kendall $\tau$ 监控（§
 
 ### 5.1 模式 A 配置
 
+#### 前置步骤：参数分层与敏感性筛选 **[必做]**
+
+搜索空间不能直接由"所有可调参数"构成。`05-skill-decomposition.md` 从参照实现里
+拆出 33 个参数标记，加上本文 §3 的权重与门控，候选维度远超 200–400 trials 能覆盖的规模：
+TPE 与 CMA-ES 在高维稀疏信号下会退化成随机搜索，而实验结论看不出这一点——
+搜索"跑完了"，只是没搜到。
+
+因此**每次重建搜索空间前必须先做一轮筛选**，把参数分成三层：
+
+| 层 | 处置 | 判据 |
+| --- | --- | --- |
+| **可搜层** | 进 optimizer 的搜索空间 | 单参数扰动对目标 $J$ 的影响超过噪声带 |
+| **固定层** | 冻结为常量，记入 $\theta$ 摘要 | 扰动影响落在噪声带内 |
+| **边界层** | 只作为 $P.\mathrm{limits}$ 的安全上限，永不参与搜索 | 越界会破坏可比性或造成不可控成本（预算上限、`end_date`、并发） |
+
+筛选协议：
+
+```text
+1. 基线      用默认取值跑 validation，重复 R 次，得到 J 的噪声带宽度
+2. 单因子    每个候选参数取低/中/高三档，其余固定，测 |ΔJ|
+3. 分层      |ΔJ| 超过噪声带 → 可搜层；否则 → 固定层
+4. 交互抽查  对可搜层里语义相关的参数对（如 N_sem 与 N_judge）做一次二维扫描，
+             确认没有把强交互项误判进固定层
+5. 落盘      产出 screening_report：每个参数的层归属、|ΔJ|、判定依据、筛选时的数据切片
+```
+
+三条约束：
+
+- **筛选用 validation，不用 held-out**。held-out 只在最终冻结后使用一次；
+- **screening_report 必须版本化并与训练结果一同归档**。固定层的取值是实验条件的一部分，
+  报告结果时不写明它，等于隐藏了一半的配置；
+- **数据切片或特征族变化后必须重跑筛选**。参数的敏感性依赖于数据分布——
+  接入 OpenCitations（§2.1）或改变意图分型都会使旧的分层失效。
+
+筛选本身的算力计入训练预算，在等算力比较中不得漏记（`experiments.md` §5.1）。
+
+#### 搜索配置
+
 ```text
 optimizer     TPE (Optuna) 或 CMA-ES，200–400 trials
 objective     J = 0.6·F1@K + 0.2·Recall@K + 0.2·NDCG@K - 0.02·Cost
@@ -586,6 +661,35 @@ J3  + LLM judge on full text (L3c)
 J2' judge 蒸馏后的 L2 打分器（线上不调 judge）
 ```
 
+扩展轴 E，与排序器轴交叉：
+
+| 实验 | 引文扩展 |
+| --- | --- |
+| E0 | 不做扩展（仅检索召回） |
+| E1 | 后向扩展（references + 共被引） |
+| E2 | E1 + 前向扩展（citations） |
+| E3 | E2 + OpenCitations 补边（§2.1） |
+
+E 轴检验一条来自参照实现的负面经验：**候选覆盖的增益不等于排序的增益**。
+MetaScientist 的 citeflow skill 记录，前向扩展至今未设为默认阶段，
+理由是"更大的 store 本身不改善 top-K，前向扩展曾把已找到的相关论文压到 rank 100 之后"
+（`05-skill-decomposition.md` CF-S-09、CF-F-01）。这是别人已经踩过的坑，
+而本项目有 held-out 评测可以证伪它。
+
+因此 E 轴的每一格**必须同时报告两个量**：候选集内的 gold 覆盖率（召回上界）
+与最终 top-K 指标。四种组合分别对应不同处置：
+
+```text
+覆盖↑ 排序↑    扩展有效，设为默认
+覆盖↑ 排序↓    复现了参照实现的负面结果 → 扩展保留但需门控，且必须报告门控条件
+覆盖↑ 排序≈    扩展是排序器的负担而非收益 → 查是不是特征稀释或候选噪声
+覆盖≈          扩展本身无效，与排序无关
+```
+
+第二种情形若出现，**不得只报告 top-K 下降就关闭扩展**：
+覆盖率提高而排序变差，说明问题在排序器而不在扩展，
+此时应记录为排序器的容量缺口，进 §10.2。**[待验证]**
+
 偏好来源轴，与上两表交叉：
 
 | 实验 | $NP_0^{agent}$ | $k$ 尺度更新 |
@@ -655,6 +759,37 @@ J2 - criteria      换成通用准则，判别标准的学习是否真的有增�
 
 `list_providers` 是 `provider_query` 可用的前提：Agent 得先知道有哪些源、
 各自支持什么语法、还剩多少配额，才谈得上自己写检索式。
+
+#### provider 语法的载体：运行时能力表，不是静态文本
+
+各 provider 的原生检索语法（OpenAlex 的 `filter` 字段与布尔语法糖、
+arXiv 的字段前缀与逻辑算符）**由 `list_providers` 在运行时返回，
+不写进工具描述，也不写进 skill 文件**。三条理由：
+
+1. **只有它能随 $\theta^S_k$ 收窄**。§3 要求 $T^M$ 是依据 $\theta^S_k$ 生成的受约束工具视图。
+   静态文本做不到同步：$\theta$ 禁用了某个字段或收窄了时间窗，静态语法表还在教 Agent 用它，
+   Agent 会写出必被运行时拒绝的检索式，白费 step。
+2. **成本发生在需要的时候**。OpenAlex 的完整 filter 语法是千 token 量级，
+   而一个 episode 内通常只写 1–2 次原生检索式；按 provider 裁剪后的能力表是百 token 量级，
+   且只在 Agent 主动探查时付一次。
+3. **不污染被观测量**。passthrough 存在的理由是观察 Agent 能否构造精确检索式
+   （`search-service.md` §2）。若要求 Agent 先查阅一份 skill 文档，
+   "没写出好检索式"就有了两个无法分离的原因——不会构造，或没想起来查文档。
+   前置探查是接口契约而非策略判断，因此可以由运行时强制，不与"策略归 Agent"冲突。
+
+由此确定三条接口约定：
+
+- `provider_query` 的工具描述只写职责与前置条件，不含语法规格；
+- `list_providers(provider?)` 返回语法规格、**当前 $\theta^S_k$ 下实际可用的字段子集**、
+  配额余量与 1–2 条合法检索式样例；
+- 语法拒绝必须返回可操作诊断（哪个字段在当前配置下不可用、去哪里查），
+  并记入 $\bar{\tau}_t$——Reviewer 需要据此区分 Agent 是在试探边界还是在乱写。
+
+`provider_query` 保持单一工具、provider 作枚举参数，不按数据源拆成
+`openalex_query` / `arxiv_query`：拆开会让新增一个源变成修改工具集，
+而统一工具加能力表只需注册一条记录（§2.1）。
+
+密钥、限流退避与配额记账全部封闭在 Service 内，Agent 不持有也不感知凭据。
 
 ### 7.2 Reviewer 的工具集 $T^R$
 
@@ -763,6 +898,36 @@ NP_agent_v0:
 条目粒度即提案粒度：`propose_preference_update` 的 `changes` 以 `id` 为单位，
 消融可逐条关闭，回放可定位到具体条目的具体版本。
 
+#### 示例式条目
+
+条目有陈述式与示例式两种形态，**都在 $PH_k$ 内**（`design.md` §6.1）。
+示例式条目用于查询分解这类"说不清但演示得出来"的判断：
+
+```text
+  - id: decompose-example-cross-community
+    kind: example
+    origin: {source: metasci-citeflow/references/query-search.md, lines: "34-44",
+             status: rephrased}
+    text: |
+      问题："能否借用 conformal prediction 的校准指标改进 machine unlearning 的评价？"
+      分解：(machine unlearning, evaluation) / (conformal prediction, calibration)
+           / (unlearning, benchmark) / (model editing, knowledge)
+      要点：第四组不在原问题的字面里，是由假设隐含的相关社区推断出来的。
+```
+
+三条要求：
+
+- **`kind` 显式区分**，因为示例的改写方式与陈述不同：陈述可以逐句修订，
+  示例通常整条替换。`propose_preference_update` 需要据此选择操作；
+- **`origin` 必带**：取自真实轨迹的哪个 episode、哪次调用，或标注为人工构造/改写。
+  没有来源的示例在归因时无法判断它是否已被后续证据推翻；
+- **计入 P 轴消融**：P0（最小指令）不含任何示例式条目，P1 含全部。
+  否则 P2 − P1 测的就不是"学出来的偏好能否达到人工撰写的水平"。
+
+$NP_0^{judge}$ 侧同理——§4.2 判别准则里的正反例与准则文本同属一个版本化对象，
+其中 `05-skill-decomposition.md` CF-B-07 的"邻接社区过载"最适合以示例形态承载：
+该判据的关键在于识别"术语重叠但引用社区不同"，陈述式表述很难让判别器稳定复现。
+
 #### 许可证前置条件
 
 沿用 `metascientist-rerank-design.md` §7 的结论：该参考目录未发现独立的
@@ -783,7 +948,7 @@ src/search_service/
   graph/       # 领域内引用集中度、BC/CC、可选的 personalized PageRank
   judge/       # cross-encoder 与 LLM judge，准则版本与判定缓存
   rank/        # L0–L3 编排、门控、意图 profile、确定性 tie-break
-  training/    # 回放数据集、模式 A 搜索、消融脚本
+  training/    # 回放数据集、敏感性筛选、模式 A 搜索、消融脚本
   governance/  # 预算、限流退避、轨迹落盘、时间边界强制、提案验证
 ```
 
@@ -791,7 +956,7 @@ src/search_service/
 | --- | --- | --- |
 | M0 | HTTP 骨架 + OpenAlex 单源 + L0/L1 | `search_metadata` 端到端跑通，带预算与时间边界 |
 | M1 | 两源聚合：主键合并、字段路由、preprint–article cluster | 合并正确率可人工核对；标题兜底触发率有统计 |
-| M2 | 特征抽取 + 回放数据集 + 模式 A 训练 | 一个 benchmark 上 B4 优于 B2 与 B0 |
+| M2 | 特征抽取 + 回放数据集 + 敏感性筛选 + 模式 A 训练 | `screening_report` 产出且搜索空间由它确定；一个 benchmark 上 B4 优于 B2 与 B0 |
 | M3 | L3a/L3b 判别接入 | J1/J2 相对 J0 的增益与成本一并报告 |
 | M4 | Reviewer 离线工具与提案验证闭环 | 提案可归因、可回滚，held-out 下工具不注册 |
 
@@ -832,6 +997,11 @@ M2 之前不接 Reviewer：没有稳定的可训练打分函数，
 
 引用语义类特征已从 §3.8 的清单中**移除**而非留空位，避免训练出依赖不可得字段的模型。
 接入新计量源时作为一次显式的 `feature_version` 升级处理。
+
+OpenCitations（§2.1）**不改变上表任何一行**：它只补引文边，
+不提供计量指标、引用上下文、引用 intent 或摘要，也不参与召回。
+它针对的是另一个问题——`referenced_works` 在 preprint 上仅 39% 覆盖（§2.2），
+即图特征整族缺失。两者不可互相替代。
 
 ### 10.2 未验证 **[待验证]**
 
