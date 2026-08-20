@@ -170,3 +170,14 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 - 对用户反馈先明确同意或不同意，再说明依据和改动。
 - 普通工程判断自行完成；只有选择会显著改变产品行为、成本或数据口径时才询问用户。
 - 用户要求与本规范冲突时，明确指出冲突及风险，并在执行前取得确认。
+
+## 10. Documentation and Math Notation
+
+- Markdown 文档中的公式一律使用 LaTeX：行内公式写作 `$C^M_t$`，块级公式写作独占一行的 `$$` 包裹。不得用反引号或 text 代码块承载公式。
+- 区分数学与代码：形式化模型中的变量、函数和算子（`$PH_k$`、`$\bar{\tau}_t$`、`$\mathrm{Compose}$`、`$U_{PH}$`）用 `$...$`；代码标识符、schema 字段、工具名和路径（`end_date`、`evidence_ids`、`update_preference`）用反引号。
+- 同一组多行推导写在一个 `$$` 块内，用 `\begin{aligned} ... \end{aligned}` 对齐，不拆成多个连续的单行 `$$` 块。
+- 希腊字母和运算符用 LaTeX 命令而非 Unicode 字符：`\theta`、`\tau`、`\Delta`、`\langle \rangle`、`\neq`、`\to`、`\cap`。Unicode 数学符号只允许出现在 ASCII 图、Mermaid 节点文本和普通叙述句中。
+- 下标含表达式时必须加花括号：`PH_{k+1}`、`C^M_{t+1}`，不写 `PH_(k+1)`。
+- 数据结构定义、伪代码、流水线和 ASCII 图仍用 text 代码块，不转成公式。
+- 新增或修改公式后用 KaTeX 在 `throwOnError` 模式下校验，确认无解析错误再提交。
+- 结构图以 Mermaid 源为规范，可另附 ASCII 版和渲染图；三者不一致时以 Mermaid 源和公式为准。
