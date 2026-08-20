@@ -3,7 +3,7 @@
 	"defaultModel": "k3",
 	"defaultThinkingLevel": "medium",
 	"defaultProfile": "main",
-	"enabledProfiles": ["main", "research", "coder", "evaluator", "plan"],
+	"enabledProfiles": ["main", "research", "coder", "evaluator", "plan", "search"],
 	"steeringMode": "one-at-a-time",
 	"followUpMode": "one-at-a-time",
 	"theme": "prism",

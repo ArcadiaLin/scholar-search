@@ -11,7 +11,7 @@
 | S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
-| S3 | search profile：工具集收紧 | TODO | | |
+| S3 | search profile：工具集收紧 | DONE | `PENDING_S3` | 正文只放 $SP_M$ 静态部分，检索策略留给 S5 |
 | S4 | 概念到实现映射 + Preference 载体 | TODO | | |
 | S5 | $NP_0^{agent}$ 条目化 | TODO | | |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
@@ -211,6 +211,86 @@
      ```
 
 - commit: `fae2073`
+### 2026-08-20 — S3
+
+- 做了：
+  - 新建 `widis/.widi-scholar/profiles/search.md`；
+  - `settings.json` 的 `enabledProfiles` 追加 `"search"`。
+
+- `tools:` 只有 S1/S2 注册的四个检索工具：
+  `[list_providers, search_metadata, get_paper, provider_query]`。
+  没有 `bash` / `write` / `edit`，也没有 `read` / `grep` / `find` / `ls` /
+  `spawn_agent`。`includeCwd: false`、`skillsListing: false`——
+  一个没有文件系统工具的 agent，注入 cwd 只是噪音。
+
+- **正文写了什么、故意没写什么**（这条是 S3 最容易做错的地方）：
+
+  正文只有 $SP_M$ 的静态部分，四块：
+
+  | 块 | 内容 |
+  | --- | --- |
+  | 角色 | 只做检索；没有 shell/编辑器/文件系统，需要写代码就说明并停下 |
+  | 工具调用协议 | `provider_query` 前必须 `list_providers`；`end_date` 每次都带且不得放宽或编造；读完返回再发下一个调用；被拒绝时拒绝信息本身指出该改什么；标题/作者/年份/标识符一律来自工具结果，不得凭记忆写 |
+  | 输出契约 | 用工具给的 `id` 原文引用；报告过程（哪些源应答、召回量、什么失败了）；区分"文献本来就少"/"某个源不可用"/"检索表达不了这个约束"；明确说没覆盖到什么 |
+  | 安全边界 | 不执行代码、不改文件、不编造引用 |
+
+  **故意不写的**（这些属于 $NP_k^{agent}$，是 S5 的内容）：
+  - 要不要分解子查询、分解成几个、怎么保证子查询互不重叠；
+  - 先 facet 勘察还是直接召回；
+  - 什么时候该从统一检索升级到 `provider_query`；
+  - 什么时候该沿引文扩展、扩几层；
+  - 优先找综述、优先找高被引之类的启发式；
+  - 预算怎么分配、什么时候停。
+
+  为什么这条边界重要：`prototype.md` §7.3 约束一要求策略先验必须有一个
+  Reviewer 能作用的载体。任何一句写进 profile body 的策略，Reviewer 都改不动，
+  S5 的消融实验（关掉全部条目 vs 打开全部条目，轨迹形状应当明显不同）
+  就会失效——因为策略还藏在 profile 里。
+
+  对照：`widis/.widi-pasa/profiles/crawler.md` 把两者混在一起
+  （"turn the research question into several mutually exclusive queries"、
+  "include at least one query aimed at surveys" 都是策略）。
+  那对 PaSa 复现是合适的，对本路线不是——本路线要能消融策略。
+
+  边界判定上有两处需要说明，不是随手放进去的：
+  - **`provider_query` 前置 `list_providers`** 写进了协议。
+    依据是 `prototype.md` §7.1 末段的原文："前置探查是接口契约而非策略判断，
+    因此可以由运行时强制，不与'策略归 Agent'冲突"。
+  - **`end_date` 必须携带且不得放宽** 写进了协议。
+    它不是"检索得好不好"的策略，而是评测契约与治理约束
+    （`05-skill-decomposition.md` §0 把强制预算与 `end_date` 列为
+    "有 coding 能力就无法强制"的那类硬约束）。
+
+- 没有设 `projectContext`：S4 才建偏好载体并由它指向。
+  也没有像 `main` / `research` 那样注入 `AGENTS.md` / `problem.md`——
+  那是仓库工程契约，对一个只会检索的 agent 是噪音，而且会顺带注入工程策略。
+
+- 验收（实际命令与输出）：
+  1. `inspect` 一个 `profileId: "search"` 的 agent：
+     - `profile: {"id":"search","label":"Scholar Search Agent"}`
+     - `toolNames: ["list_providers","search_metadata","get_paper","provider_query"]`
+     - 对 `bash`/`write`/`edit`/`read`/`grep`/`find`/`ls`/`spawn_agent` 逐个检查
+       → `forbidden tools present: NONE`
+  2. 一次完整检索问答（Service 在 127.0.0.1:8125，打真实 OpenAlex + arXiv）：
+     提问"我要 retrieval-augmented generation 用于问答的文献，
+     2023-06-30 之后发表的不要"
+     → `run_summary`: `tools: {calls:13, failed:0,
+       byName:{list_providers:1, search_metadata:3, get_paper:9}}`,
+       `providerErrors: 0`
+     模型的回答里带了"Search methodology"一节，自己报告了
+     `sources queried: OpenAlex and arXiv (serper was disabled)`、
+     实际发出的主查询与子查询、`end_date strictly set to 2023-06-30`、
+     `215 recalled`，以及一段 Limitations（说明哪些结果是关键词重叠带来的、
+     以及 `judge_level=off` 所以没有影响力指标）。
+     输出契约里"报告过程、说明没覆盖到什么"确实生效了。
+  3. `npm run test:widis` → `87/87`（本 stage 没动代码，仅确认无回归）。
+
+- 一个已知告警（与本 stage 无关）：启动诊断里仍有
+  `profile.id_filename_mismatch`，但只针对默认 profile `main`，
+  `search.md` 没有触发。根因是 U-02，未修。
+
+- commit: `PENDING_S3`
+
 
 
 ## 决策记录
