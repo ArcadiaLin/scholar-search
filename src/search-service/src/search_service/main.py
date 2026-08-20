@@ -11,9 +11,19 @@ from fastapi.responses import JSONResponse
 
 from search_service import __version__
 from search_service.aggregator import SearchAggregator
+from search_service.api import (
+    budget_router,
+    expand_router,
+    facet_router,
+    paper_router,
+    providers_router,
+    rank_router,
+    search_router,
+)
 from search_service.cache import TTLCache
 from search_service.config import ServiceConfig
-from search_service.models import HealthResponse, SearchRequest, SearchResponse
+from search_service.models import HealthResponse
+from search_service.models import SearchResponse as LegacySearchResponse
 from search_service.plugin_loader import PluginRegistry
 
 logger = logging.getLogger(__name__)
@@ -30,13 +40,20 @@ async def lifespan(app: FastAPI):
     registry.load()
 
     cache_config = config.get_cache_config()
-    cache = TTLCache[SearchResponse](ttl_seconds=float(cache_config.get("ttl_seconds", 300)))
+    cache = TTLCache[LegacySearchResponse](
+        ttl_seconds=float(cache_config.get("ttl_seconds", 300)),
+    )
     aggregator = SearchAggregator(registry, cache)
 
     _state["config"] = config
     _state["registry"] = registry
     _state["cache"] = cache
     _state["aggregator"] = aggregator
+
+    app.state.config = config
+    app.state.registry = registry
+    app.state.cache = cache
+    app.state.aggregator = aggregator
 
     enabled = [p.name for p in registry.get_enabled_plugins()]
     logger.info("Search service started with enabled plugin(s): %s", enabled)
@@ -50,6 +67,16 @@ app = FastAPI(
     description="Pluggable HTTP aggregation service for academic paper search.",
     lifespan=lifespan,
 )
+
+# Include API routers. Order matters for documentation only; FastAPI resolves
+# paths uniquely by their full path + method.
+app.include_router(search_router)
+app.include_router(providers_router)
+app.include_router(rank_router)
+app.include_router(expand_router)
+app.include_router(facet_router)
+app.include_router(paper_router)
+app.include_router(budget_router)
 
 
 @app.exception_handler(Exception)
@@ -88,33 +115,3 @@ async def health() -> HealthResponse:
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"service": "scholar-search-service", "version": __version__}
-
-
-@app.post("/search", response_model=SearchResponse)
-async def search(request: SearchRequest) -> SearchResponse:
-    """Generic search endpoint across all enabled source plugins."""
-    aggregator = get_aggregator()
-    response = await aggregator.search(request)
-
-    # If every requested source failed and we have no results, surface it as a service error.
-    if not response.results and response.errors:
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=response.model_dump(),
-        )
-
-    return response
-
-
-@app.post("/search/metadata", response_model=SearchResponse)
-async def search_metadata(request: SearchRequest) -> SearchResponse:
-    """Search for paper metadata using the default metadata sources."""
-    request.mode = "metadata"
-    return await search(request)
-
-
-@app.post("/search/fulltext", response_model=SearchResponse)
-async def search_fulltext(request: SearchRequest) -> SearchResponse:
-    """Search for full-text / PDF links using the default fulltext sources."""
-    request.mode = "fulltext"
-    return await search(request)

@@ -16,7 +16,8 @@ import httpx
 
 from search_service.exceptions import SourceError
 from search_service.models import SearchResultItem
-from search_service.plugin_loader import SourcePlugin
+from search_service.providers.base import SearchProvider
+from search_service.schemas import ProviderCapabilities
 
 _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 _ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}|arxiv:\d{4}\.\d{4,5})", re.IGNORECASE)
@@ -221,13 +222,65 @@ class ArxivClient:
 
         raise SourceError("arxiv", "unknown", f"arXiv request failed after retries: {last_exception}")
 
+    async def native_query(self, raw_payload: dict[str, Any]) -> list[SearchResultItem]:
+        """Execute a provider-native arXiv query and return parsed items.
+
+        The arXiv Atom API returns XML, so the result is parsed into the same
+        normalized items as the regular search endpoint.
+        """
+        await self._rate_limit()
+        client = await self._get_client()
+
+        # Merge caller payload with safe defaults.
+        params = {
+            "start": 0,
+            "max_results": 200,
+            "sortBy": "relevance",
+            "sortOrder": "descending",
+        }
+        params.update(raw_payload)
+
+        last_exception: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await client.get(self.base_url, params=params)
+                response.raise_for_status()
+                return _parse_feed(response.text)
+            except httpx.TimeoutException as exc:
+                last_exception = exc
+                if attempt == self.max_retries:
+                    raise SourceError("arxiv", "timeout", f"arXiv request timed out after {attempt + 1} attempts") from exc
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status == 429:
+                    if attempt == self.max_retries:
+                        raise SourceError("arxiv", "rate_limit", "arXiv rate limit exceeded") from exc
+                elif 400 <= status < 500:
+                    raise SourceError("arxiv", "http", f"arXiv client error {status}: {exc.response.text[:200]}") from exc
+                elif attempt == self.max_retries:
+                    raise SourceError("arxiv", "http", f"arXiv server error {status}: {exc.response.text[:200]}") from exc
+            except httpx.RequestError as exc:
+                last_exception = exc
+                if attempt == self.max_retries:
+                    raise SourceError("arxiv", "http", f"arXiv request failed: {exc}") from exc
+
+            wait = min(2**attempt, 60.0)
+            await asyncio.sleep(wait)
+
+        raise SourceError("arxiv", "unknown", f"arXiv request failed after retries: {last_exception}")
+
     async def close(self) -> None:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
 
-class ArxivPlugin(SourcePlugin):
-    """arXiv source plugin."""
+class ArxivPlugin(SearchProvider):
+    """arXiv source plugin.
+
+    In P0 arXiv is a supplementary source: it provides precise ID/title hits,
+    exact abstracts, version information and time-window validation. It does not
+    serve as the primary recall source.
+    """
 
     name = "arxiv"
 
@@ -235,9 +288,45 @@ class ArxivPlugin(SourcePlugin):
         super().__init__(config)
         self._client = ArxivClient(config)
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    def _build_capabilities(self) -> ProviderCapabilities:
+        cfg = self.config.get("capabilities", {})
+        return ProviderCapabilities(
+            name=self.name,
+            search_keyword=bool(cfg.get("search_keyword", True)),
+            search_native_query=bool(cfg.get("search_native_query", True)),
+            search_field_filter=bool(cfg.get("search_field_filter", True)),
+            facet_group_by=bool(cfg.get("facet_group_by", False)),
+            id_lookup=bool(cfg.get("id_lookup", True)),
+            id_mapping=bool(cfg.get("id_mapping", False)),
+            graph_references=bool(cfg.get("graph_references", False)),
+            graph_citations=bool(cfg.get("graph_citations", False)),
+            recommend_related=bool(cfg.get("recommend_related", False)),
+            metrics_raw_citations=bool(cfg.get("metrics_raw_citations", False)),
+            metrics_normalized=bool(cfg.get("metrics_normalized", False)),
+            text_abstract=bool(cfg.get("text_abstract", True)),
+            text_fulltext=bool(cfg.get("text_fulltext", True)),
+            cost_model=self.config.get("cost_model", {}),
+            field_map=self.config.get("field_map", {}),
+            reliability=self.config.get("reliability", {}),
+        )
+
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        filters: dict[str, Any] | None = None,
+        subqueries: list[str] | None = None,
+        end_date: str | None = None,
+    ) -> list[SearchResultItem]:
         try:
             return await self._client.search(query, top_k)
+        finally:
+            await self._client.close()
+
+    async def search_native(self, raw_payload: dict[str, Any]) -> list[SearchResultItem]:
+        try:
+            return await self._client.native_query(raw_payload)
         finally:
             await self._client.close()
 

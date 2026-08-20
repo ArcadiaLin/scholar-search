@@ -15,7 +15,8 @@ import httpx
 
 from search_service.exceptions import SourceError
 from search_service.models import SearchResultItem
-from search_service.plugin_loader import SourcePlugin
+from search_service.providers.base import SearchProvider
+from search_service.schemas import ProviderCapabilities
 
 _OPENALEX_ID_PREFIX = "https://openalex.org/"
 _WORK_SELECT = (
@@ -245,8 +246,78 @@ class OpenAlexClient:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
+    async def native_query(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
+        """Execute a provider-native query against the works endpoint.
 
-class OpenAlexPlugin(SourcePlugin):
+        The caller is responsible for providing a valid OpenAlex parameter set.
+        ``select`` is injected if absent to keep responses small.
+        """
+        params = dict(raw_payload)
+        params.setdefault("select", _WORK_SELECT)
+        return await self._request("GET", "works", params)
+
+    async def lookup_work(self, work_id: str) -> dict[str, Any] | None:
+        """Fetch a single work by OpenAlex ID (short or full URI)."""
+        short_id = _extract_openalex_id(work_id) or work_id
+        payload = await self._request(
+            "GET",
+            f"works/{short_id}",
+            {"select": _WORK_SELECT},
+        )
+        return payload if isinstance(payload, dict) else None
+
+    async def fetch_references(self, work_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch outgoing references of a work.
+
+        Returns the referenced work objects, capped at ``limit``.
+        """
+        short_id = _extract_openalex_id(work_id) or work_id
+        work = await self.lookup_work(short_id)
+        if not work:
+            return []
+        refs = work.get("referenced_works") or []
+        if not refs:
+            return []
+
+        results: list[dict[str, Any]] = []
+        for ref_id in refs[:limit]:
+            ref_short = _extract_openalex_id(ref_id) or ref_id
+            try:
+                ref = await self.lookup_work(ref_short)
+            except SourceError:
+                continue
+            if ref:
+                results.append(ref)
+        return results
+
+    async def fetch_citations(self, work_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Fetch works citing the given work.
+
+        Uses OpenAlex's ``filter=cites:<id>`` mechanism.
+        """
+        short_id = _extract_openalex_id(work_id) or work_id
+        payload = await self._request(
+            "GET",
+            "works",
+            {
+                "filter": f"cites:{short_id}",
+                "per-page": min(limit, 200),
+                "select": _WORK_SELECT,
+            },
+        )
+        return payload.get("results") or []
+
+    async def fetch_facet(self, query: str, group_by: list[str]) -> dict[str, Any]:
+        """Return facet distribution for a query."""
+        params: dict[str, Any] = {
+            "search": query,
+            "group-by": ",".join(group_by),
+            "per-page": 1,
+        }
+        return await self._request("GET", "works", params)
+
+
+class OpenAlexPlugin(SearchProvider):
     """OpenAlex source plugin."""
 
     name = "openalex"
@@ -255,9 +326,70 @@ class OpenAlexPlugin(SourcePlugin):
         super().__init__(config)
         self._client = OpenAlexClient(config)
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    def _build_capabilities(self) -> ProviderCapabilities:
+        cfg = self.config.get("capabilities", {})
+        return ProviderCapabilities(
+            name=self.name,
+            search_keyword=bool(cfg.get("search_keyword", True)),
+            search_native_query=bool(cfg.get("search_native_query", True)),
+            search_field_filter=bool(cfg.get("search_field_filter", True)),
+            facet_group_by=bool(cfg.get("facet_group_by", True)),
+            id_lookup=bool(cfg.get("id_lookup", True)),
+            id_mapping=bool(cfg.get("id_mapping", False)),
+            graph_references=bool(cfg.get("graph_references", True)),
+            graph_citations=bool(cfg.get("graph_citations", True)),
+            recommend_related=bool(cfg.get("recommend_related", True)),
+            metrics_raw_citations=bool(cfg.get("metrics_raw_citations", True)),
+            metrics_normalized=bool(cfg.get("metrics_normalized", True)),
+            text_abstract=bool(cfg.get("text_abstract", True)),
+            text_fulltext=bool(cfg.get("text_fulltext", False)),
+            cost_model=self.config.get("cost_model", {}),
+            field_map=self.config.get("field_map", {}),
+            reliability=self.config.get("reliability", {}),
+        )
+
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        filters: dict[str, Any] | None = None,
+        subqueries: list[str] | None = None,
+        end_date: str | None = None,
+    ) -> list[SearchResultItem]:
+        """Search works using OpenAlex full-text search."""
         try:
             return await self._client.search(query, top_k)
+        finally:
+            await self._client.close()
+
+    async def search_native(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await self._client.native_query(raw_payload)
+        finally:
+            await self._client.close()
+
+    async def lookup(self, paper_id: str) -> dict[str, Any] | None:
+        try:
+            return await self._client.lookup_work(paper_id)
+        finally:
+            await self._client.close()
+
+    async def get_references(self, paper_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        try:
+            return await self._client.fetch_references(paper_id, limit)
+        finally:
+            await self._client.close()
+
+    async def get_citations(self, paper_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        try:
+            return await self._client.fetch_citations(paper_id, limit)
+        finally:
+            await self._client.close()
+
+    async def facet(self, query: str, group_by: list[str]) -> dict[str, Any]:
+        try:
+            return await self._client.fetch_facet(query, group_by)
         finally:
             await self._client.close()
 

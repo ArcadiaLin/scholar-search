@@ -75,24 +75,22 @@ def test_search_metadata(client, mock_openalex, mock_arxiv):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["query"] == "test"
-    assert body["mode"] == "metadata"
-    assert body["total"] == 2
-    assert body["source_counts"] == {"openalex": 1, "arxiv": 1}
-    assert body["errors"] == []
+    assert len(body["papers"]) == 2
+    assert body["search_state"]["candidate_counts"]["returned"] == 2
+    assert set(body["search_state"]["selected_sources"]) == {"openalex", "arxiv"}
+    assert body["search_state"]["failures"] == []
+    assert body["provenance"]["ranker_version"] == "legacy-aggregator"
 
 
-def test_search_fulltext(client, mock_arxiv, mock_serper):
-    with (
-        mock.patch("search_service.plugins.arxiv.ArxivPlugin.search", mock_arxiv),
-        mock.patch("search_service.plugins.serper.SerperPlugin.search", mock_serper),
-    ):
+def test_search_fulltext(client, mock_arxiv):
+    # Serper is disabled in P0; fulltext mode uses arXiv only.
+    with mock.patch("search_service.plugins.arxiv.ArxivPlugin.search", mock_arxiv):
         response = client.post("/search/fulltext", json={"query": "test", "top_k": 10})
 
     assert response.status_code == 200
     body = response.json()
-    assert body["mode"] == "fulltext"
-    assert body["total"] == 2
+    assert len(body["papers"]) == 1
+    assert body["search_state"]["selected_sources"] == ["arxiv"]
 
 
 def test_search_generic(client, mock_openalex, mock_arxiv):
@@ -104,7 +102,7 @@ def test_search_generic(client, mock_openalex, mock_arxiv):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["mode"] == "metadata"
+    assert len(body["papers"]) == 2
 
 
 def test_search_all_sources_fail(client):
@@ -117,5 +115,6 @@ def test_search_all_sources_fail(client):
 
     assert response.status_code == 503
     body = response.json()
-    assert body["total"] == 0
-    assert len(body["errors"]) == 2
+    assert body["papers"] == []
+    assert body["search_state"]["candidate_counts"]["returned"] == 0
+    assert len(body["search_state"]["failures"]) == 2

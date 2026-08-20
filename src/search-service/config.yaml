@@ -8,12 +8,58 @@ service:
   default_top_k: 20
   default_timeout_ms: 15000
 
+# Feature/ranker versioning. Changing feature definitions must bump feature_version.
+features:
+  feature_version: "f1"
+  ranker_version: "l2-intent-v1"
+
+# Default ranking profiles (intent-conditioned weights). Values are initial
+# guesses and are overwritten by offline-trained HP_k.
+ranking_profiles:
+  overview:
+    citation_percentile: 0.20
+    co_citation:         0.15
+    coupling:            0.20
+    semantic:            0.30
+    recency:             0.05
+    author_h:            0.05
+    lexical:             0.05
+  seminal:
+    citation_percentile: 0.35
+    co_citation:         0.25
+    coupling:            0.10
+    semantic:            0.25
+    recency:             0.00
+    author_h:            0.05
+    lexical:             0.00
+  frontier:
+    citation_percentile: 0.05
+    co_citation:         0.05
+    coupling:            0.20
+    semantic:            0.40
+    recency:             0.30
+    author_h:            0.00
+    lexical:             0.00
+  similar:
+    citation_percentile: 0.05
+    co_citation:         0.10
+    coupling:            0.35
+    semantic:            0.40
+    recency:             0.05
+    author_h:            0.00
+    lexical:             0.05
+
 cache:
-  ttl_seconds: 300
+  # Cache layers shared across the service.
+  raw_response_ttl_seconds: 300
+  cluster_ttl_seconds: 300
+  embedding_ttl_seconds: 3600
+  feature_matrix_ttl_seconds: 86400
 
 plugins:
   openalex:
     enabled: true
+    role: primary
     # Leave empty to read from OPENALEX_API_KEY environment variable.
     api_key: ""
     # Leave empty to read from OPENALEX_MAILTO environment variable.
@@ -24,16 +70,130 @@ plugins:
     per_page: 100
     rate_limit_rps: 10.0
 
+    capabilities:
+      search_keyword: true
+      search_native_query: true
+      search_field_filter: true
+      facet_group_by: true
+      id_lookup: true
+      id_mapping: false
+      graph_references: true
+      graph_citations: true
+      recommend_related: true
+      metrics_raw_citations: true
+      metrics_normalized: true
+      text_abstract: true
+      text_fulltext: false
+
+    cost_model:
+      works_search:
+        usd_per_call: 0.001
+        daily_quota: 1000
+        rate_limit_rps: 10.0
+      filter_query:
+        usd_per_call: 0.0001
+        daily_quota: 10000
+        rate_limit_rps: 10.0
+      group_by:
+        usd_per_call: 0.0001
+        daily_quota: 10000
+        rate_limit_rps: 10.0
+      single_work:
+        usd_per_call: 0.0
+        daily_quota: null
+        rate_limit_rps: 10.0
+
+    field_map:
+      id: openalex_id
+      display_name: title
+      title: title
+      publication_year: year
+      publication_date: published
+      doi: doi
+      abstract_inverted_index: abstract
+      authorships: authors
+      primary_location: urls
+      concepts: topics
+      topics: topics
+      keywords: keywords
+      referenced_works: references
+      related_works: related_works
+      cited_by_api_url: citations
+      cited_by_count: citation_count
+      fwci: normalized_impact
+      citation_normalized_percentile: citation_percentile
+      counts_by_year: counts_by_year
+      is_retracted: is_retracted
+      is_paratext: is_paratext
+      biblio: biblio
+      mesh: mesh
+      open_access: open_access
+
+    reliability:
+      p50_latency_ms: 500
+      p95_latency_ms: 1500
+      error_taxonomy: ["timeout", "rate_limit", "auth", "http", "parse", "unknown"]
+      retry_policy: exponential
+      max_retries: 3
+
   arxiv:
     enabled: true
+    role: supplement
     base_url: "https://export.arxiv.org/api/query"
     timeout: 30.0
     max_retries: 2
     # arXiv polite usage: ~1 request per 3 seconds.
     rate_limit_rps: 0.33
 
+    capabilities:
+      search_keyword: true
+      search_native_query: true
+      search_field_filter: true
+      facet_group_by: false
+      id_lookup: true
+      id_mapping: false
+      graph_references: false
+      graph_citations: false
+      recommend_related: false
+      metrics_raw_citations: false
+      metrics_normalized: false
+      text_abstract: true
+      text_fulltext: true
+
+    cost_model:
+      atom_search:
+        usd_per_call: 0.0
+        daily_quota: null
+        rate_limit_rps: 0.33
+      single_paper:
+        usd_per_call: 0.0
+        daily_quota: null
+        rate_limit_rps: 0.33
+
+    field_map:
+      id: arxiv_id
+      title: title
+      summary: abstract
+      published: published
+      updated: updated
+      author: authors
+      arxiv:comment: comment
+      arxiv:affiliation: affiliation
+      category: category
+      link: urls
+
+    reliability:
+      p50_latency_ms: 800
+      p95_latency_ms: 3000
+      error_taxonomy: ["timeout", "rate_limit", "http", "parse", "unknown"]
+      retry_policy: exponential
+      max_retries: 2
+
+  # Serper is disabled in P0. The plugin file remains in place so it can be
+  # re-enabled by setting enabled: true without modifying pipeline code.
   serper:
-    enabled: true
+    enabled: false
+    role: disabled
     # Leave empty to read from SERPER_API_KEY environment variable.
     api_key: ""
     base_url: "https://google.serper.dev"
@@ -41,3 +201,36 @@ plugins:
     max_retries: 2
     rate_limit_rps: 1.0
     query_template: "{query} filetype:pdf OR arxiv.org OR doi.org"
+
+    capabilities:
+      search_keyword: true
+      search_native_query: false
+      search_field_filter: false
+      facet_group_by: false
+      id_lookup: false
+      id_mapping: false
+      graph_references: false
+      graph_citations: false
+      recommend_related: false
+      metrics_raw_citations: false
+      metrics_normalized: false
+      text_abstract: false
+      text_fulltext: false
+
+    cost_model:
+      search:
+        usd_per_call: 0.0
+        daily_quota: null
+        rate_limit_rps: 1.0
+
+    field_map:
+      title: title
+      link: urls
+      snippet: abstract
+
+    reliability:
+      p50_latency_ms: 600
+      p95_latency_ms: 1500
+      error_taxonomy: ["timeout", "rate_limit", "auth", "http", "parse", "unknown"]
+      retry_policy: exponential
+      max_retries: 2

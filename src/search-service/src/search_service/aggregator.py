@@ -13,7 +13,16 @@ from search_service.plugin_loader import PluginRegistry, SourcePlugin
 
 _DEFAULT_SOURCES_BY_MODE: dict[str, list[str]] = {
     "metadata": ["openalex", "arxiv"],
-    "fulltext": ["arxiv", "serper"],
+    # Serper is disabled in P0; fulltext uses arXiv only. It can be re-added
+    # by registering it as an enabled provider without modifying this map.
+    "fulltext": ["arxiv"],
+}
+
+# Capability required for a source to participate in a given search mode.
+# The pipeline binds to capabilities, not provider names.
+_MODE_REQUIRED_CAPABILITY: dict[str, str] = {
+    "metadata": "search_keyword",
+    "fulltext": "text_fulltext",
 }
 
 _SOURCE_PRIORITY = {"openalex": 0, "arxiv": 1, "serper": 2}
@@ -32,10 +41,35 @@ class SearchAggregator:
         self.registry = registry
         self.cache = cache
 
-    def _select_sources(self, request: SearchRequest) -> list[str]:
+    def _select_sources(self, request: SearchRequest) -> tuple[list[str], list[str]]:
+        """Return (selected, skipped) source names for the request.
+
+        Explicit ``request.sources`` override the default map. Sources that do
+        not advertise the required capability for the requested mode are skipped
+        and recorded in pipeline state.
+        """
         if request.sources:
-            return request.sources
-        return _DEFAULT_SOURCES_BY_MODE.get(request.mode, _DEFAULT_SOURCES_BY_MODE["metadata"])
+            candidates = request.sources
+        else:
+            candidates = _DEFAULT_SOURCES_BY_MODE.get(request.mode, _DEFAULT_SOURCES_BY_MODE["metadata"])
+
+        required = _MODE_REQUIRED_CAPABILITY.get(request.mode)
+        if required is None:
+            return candidates, []
+
+        selected: list[str] = []
+        skipped: list[str] = []
+        for name in candidates:
+            caps = self.registry.get_provider_capabilities(name)
+            if caps is None:
+                # Registry does not expose capabilities (e.g. test doubles);
+                # include the source to preserve backward compatibility.
+                selected.append(name)
+            elif getattr(caps, required, False):
+                selected.append(name)
+            else:
+                skipped.append(name)
+        return selected, skipped
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Execute a search across selected sources and return aggregated results."""
@@ -51,9 +85,18 @@ class SearchAggregator:
             # Return a copy so the cached object remains marked as uncached.
             return cached.model_copy(update={"cached": True})
 
-        source_names = self._select_sources(request)
+        source_names, skipped_sources = self._select_sources(request)
         plugins = self.registry.get_enabled_plugins(source_names)
         errors: list[SourceErrorModel] = []
+
+        for skipped in skipped_sources:
+            errors.append(
+                SourceErrorModel(
+                    source=skipped,
+                    error_type="disabled",
+                    message=f"Source '{skipped}' does not advertise '{_MODE_REQUIRED_CAPABILITY.get(request.mode)}' capability",
+                )
+            )
 
         if not plugins:
             elapsed_ms = (time.perf_counter_ns() - start) // 1_000_000
@@ -67,6 +110,7 @@ class SearchAggregator:
             return SearchResponse(
                 query=request.query,
                 mode=request.mode,
+                selected_sources=source_names,
                 results=[],
                 total=0,
                 source_counts={},
@@ -103,6 +147,7 @@ class SearchAggregator:
         response = SearchResponse(
             query=request.query,
             mode=request.mode,
+            selected_sources=source_names,
             results=merged,
             total=len(merged),
             source_counts=source_counts,

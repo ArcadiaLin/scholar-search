@@ -96,6 +96,17 @@ class ServiceConfig:
             return []
         return list(plugins.keys())
 
+    def get_plugins_config(self) -> dict[str, dict[str, Any]]:
+        """Return the raw plugins configuration block from YAML.
+
+        Values are returned as-read so that callers can inspect capabilities,
+        cost models and field maps without losing nested structure.
+        """
+        plugins = self._yaml.get("plugins", {})
+        if not isinstance(plugins, dict):
+            return {}
+        return {name: cfg for name, cfg in plugins.items() if isinstance(cfg, dict)}
+
     def get_plugin_dirs(self) -> list[Path]:
         """Return list of extra plugin directories to scan."""
         if not self.settings.plugin_dirs:

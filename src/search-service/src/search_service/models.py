@@ -61,6 +61,8 @@ class SearchResponse(BaseModel):
 
     query: str = Field(description="Original search query.")
     mode: str = Field(description="Search mode that was executed.")
+    selected_sources: list[str] = Field(
+        default_factory=list, description="Sources that were selected for this request.")
     results: list[SearchResultItem] = Field(description="Aggregated and deduplicated result list.")
     total: int = Field(description="Number of deduplicated results.")
     source_counts: dict[str, int] = Field(description="Counts of results contributed per source.")

@@ -1,8 +1,10 @@
 """Tests for the search aggregator and cache."""
 
+from typing import Any
+
 import pytest
 
-from search_service.aggregator import SearchAggregator
+from search_service.aggregator import _DEFAULT_SOURCES_BY_MODE, SearchAggregator
 from search_service.cache import TTLCache
 from search_service.exceptions import SourceError
 from search_service.models import SearchRequest, SearchResponse, SearchResultItem
@@ -23,14 +25,18 @@ class MockPlugin(SourcePlugin):
 
 
 class MockRegistry:
-    def __init__(self, plugins: list[SourcePlugin]) -> None:
+    def __init__(self, plugins: list[SourcePlugin], capabilities: dict[str, Any] | None = None) -> None:
         self._plugins = {p.name: p for p in plugins}
+        self._capabilities = capabilities or {}
 
     def get_enabled_plugins(self, names: list[str] | None = None) -> list[SourcePlugin]:
         plugins = list(self._plugins.values())
         if names is not None:
             plugins = [p for p in plugins if p.name in names]
         return plugins
+
+    def get_provider_capabilities(self, name: str) -> Any | None:
+        return self._capabilities.get(name)
 
 
 @pytest.fixture
@@ -154,3 +160,67 @@ async def test_aggregator_caches_result(cache):
     assert response1.cached is False
     assert response2.cached is True
     assert response1.results == response2.results
+
+
+@pytest.mark.asyncio
+async def test_aggregator_selects_sources_by_capability_for_metadata(cache):
+    """Metadata mode requires search_keyword; sources without it are skipped."""
+    openalex = MockPlugin("openalex", [_item("W1", "Paper One", "openalex", 1)])
+    # A hypothetical source that cannot do keyword search.
+    no_keyword = MockPlugin("no_keyword", [_item("W2", "Paper Two", "no_keyword", 1)])
+    caps = {
+        "openalex": type("Caps", (), {"search_keyword": True, "text_fulltext": False})(),
+        "no_keyword": type("Caps", (), {"search_keyword": False, "text_fulltext": True})(),
+    }
+    registry = MockRegistry([openalex, no_keyword], capabilities=caps)
+    aggregator = SearchAggregator(registry, cache)
+
+    response = await aggregator.search(
+        SearchRequest(query="test", mode="metadata", top_k=10, sources=["openalex", "no_keyword"])
+    )
+
+    assert response.selected_sources == ["openalex"]
+    assert response.total == 1
+    assert response.source_counts == {"openalex": 1}
+    assert any(e.source == "no_keyword" for e in response.errors)
+
+
+@pytest.mark.asyncio
+async def test_aggregator_selects_sources_by_capability_for_fulltext(cache):
+    """Fulltext mode requires text_fulltext; only matching sources are selected."""
+    arxiv = MockPlugin("arxiv", [_item("arxiv:1", "Paper One", "arxiv", 1)])
+    openalex = MockPlugin("openalex", [_item("W1", "Paper Two", "openalex", 1)])
+    caps = {
+        "arxiv": type("Caps", (), {"search_keyword": True, "text_fulltext": True})(),
+        "openalex": type("Caps", (), {"search_keyword": True, "text_fulltext": False})(),
+    }
+    registry = MockRegistry([arxiv, openalex], capabilities=caps)
+    aggregator = SearchAggregator(registry, cache)
+
+    response = await aggregator.search(
+        SearchRequest(query="test", mode="fulltext", top_k=10, sources=["arxiv", "openalex"])
+    )
+
+    assert response.selected_sources == ["arxiv"]
+    assert response.total == 1
+    assert response.source_counts == {"arxiv": 1}
+
+
+@pytest.mark.asyncio
+async def test_aggregator_records_selected_sources(cache):
+    """The response must accurately reflect the sources that were selected."""
+    openalex = MockPlugin("openalex", [_item("W1", "Paper One", "openalex", 1)])
+    arxiv = MockPlugin("arxiv", [_item("arxiv:1", "Paper Two", "arxiv", 1)])
+    registry = MockRegistry([openalex, arxiv])
+    aggregator = SearchAggregator(registry, cache)
+
+    response = await aggregator.search(SearchRequest(query="test", mode="metadata", top_k=10))
+
+    assert set(response.selected_sources) == {"openalex", "arxiv"}
+
+
+
+def test_default_source_map_excludes_serper():
+    """Serper is disabled in P0 and must not appear in any default source map."""
+    for mode, sources in _DEFAULT_SOURCES_BY_MODE.items():
+        assert "serper" not in sources, f"serper must not be in default {mode} sources"

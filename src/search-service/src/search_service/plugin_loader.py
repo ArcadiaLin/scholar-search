@@ -53,11 +53,13 @@ class LoadedPlugin:
         instance: SourcePlugin | None,
         enabled: bool,
         error: str | None = None,
+        capabilities: Any | None = None,
     ) -> None:
         self.name = name
         self.instance = instance
         self.enabled = enabled
         self.error = error
+        self.capabilities = capabilities
 
     @property
     def ok(self) -> bool:
@@ -100,7 +102,13 @@ class PluginRegistry:
 
             try:
                 instance = self._load_plugin(file_path, name, plugin_config)
-                self._plugins[name] = LoadedPlugin(name=name, instance=instance, enabled=True)
+                capabilities = getattr(instance, "capabilities", None)
+                self._plugins[name] = LoadedPlugin(
+                    name=name,
+                    instance=instance,
+                    enabled=True,
+                    capabilities=capabilities,
+                )
                 logger.info("Loaded plugin '%s' from %s", name, file_path)
             except Exception as exc:
                 logger.exception("Failed to load plugin '%s'", name)
@@ -153,6 +161,21 @@ class PluginRegistry:
                 continue
             result.append(loaded.instance)
         return result
+
+    def get_provider_capabilities(self, name: str) -> Any | None:
+        """Return the capability table for a loaded provider, if any."""
+        loaded = self._plugins.get(name)
+        if loaded is None:
+            return None
+        return loaded.capabilities
+
+    def list_provider_capabilities(self) -> dict[str, Any]:
+        """Return capability tables keyed by provider name."""
+        return {
+            loaded.name: loaded.capabilities
+            for loaded in self._plugins.values()
+            if loaded.capabilities is not None
+        }
 
     def list_plugins(self) -> list[LoadedPlugin]:
         return list(self._plugins.values())
