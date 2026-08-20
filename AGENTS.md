@@ -102,6 +102,7 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 | `npm run widi:pasa` | 从已构建的 `dist` 启动 PASA namespace |
 | `npm run widi:pasa:rpc` | 以 PASA namespace 的 JSONL RPC 模式启动 |
 | `npm run check` | 运行 WIDI lint/typecheck 与 Python Ruff 检查，不修改文件 |
+| `npm run check:python` | 只运行 Python 检查（Ruff lint + format check），等价于 `uv run ruff check . && uv run ruff format --check .` |
 | `npm test` | 运行 WIDI 两个 workspace 的测试 |
 
 ## 5. Research and Experiment Protocol
@@ -151,6 +152,8 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 
 - 代码应便于人读；名称表达领域含义，注释只解释外部约束、非显然原因和易破坏的不变量。
 - 延续所在模块的既有模式，不得为同一问题引入第二套配置、错误或持久化约定。
+- 每个新模块必须随代码一起提交对应测试；Python 放 `tests/`，WIDI extension 跟随所在 namespace 的测试约定。
+- 写完代码必须跑检查：TypeScript 与全仓用 `npm run check`，只改 Python 时可用 `npm run check:python`（即 `uv run ruff check . && uv run ruff format --check .`）；测试分别用 `uv run pytest` 和 `npm test`。
 - 测试关注可观察契约：查询约束、去重、排序稳定性、预算停止、错误传播、缓存语义和结构化输出。
 - 网络测试使用记录好的确定性 fixture 或明确的集成测试标记；默认测试不得依赖实时 API。
 - 对外部 API 的解析必须覆盖缺失字段、分页、限流、超时和重复论文标识。
