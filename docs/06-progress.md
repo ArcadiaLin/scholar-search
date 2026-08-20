@@ -14,7 +14,7 @@
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `9bec91a` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
-| S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `PENDING_S6` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
+| S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
 | S9 | RPC 评测入口 | TODO | | |
@@ -542,7 +542,7 @@ Find me the closely related literature. Nothing published after 2024-06-30."
   这正是失败分类字段存在的意义——覆盖变差的原因是限流而不是文献少，
   Reviewer 需要能区分这两者。
 
-- commit: `PENDING_S6`
+- commit: `bb6773c`
 
 
 
