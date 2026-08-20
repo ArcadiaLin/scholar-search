@@ -10,7 +10,7 @@
 | --- | --- | --- | --- | --- |
 | S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
-| S2 | 核心检索工具 | DONE | `PENDING_S2` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
+| S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | TODO | | |
 | S4 | 概念到实现映射 + Preference 载体 | TODO | | |
 | S5 | $NP_0^{agent}$ 条目化 | TODO | | |
@@ -210,7 +210,7 @@
       abstract.search, ..., authorships.institutions.type, ..."}   # 1281 字节
      ```
 
-- commit: `PENDING_S2`
+- commit: `fae2073`
 
 
 ## 决策记录
