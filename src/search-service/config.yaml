@@ -8,54 +8,6 @@ service:
   default_top_k: 20
   default_timeout_ms: 15000
 
-# Feature/ranker versioning. Changing feature definitions must bump feature_version.
-features:
-  feature_version: "f1"
-  ranker_version: "l2-intent-v1"
-
-# Default ranking profiles (intent-conditioned weights). Values are initial
-# guesses and are overwritten by offline-trained HP_k.
-ranking_profiles:
-  overview:
-    citation_percentile: 0.20
-    co_citation:         0.15
-    coupling:            0.20
-    semantic:            0.30
-    recency:             0.05
-    author_h:            0.05
-    lexical:             0.05
-  seminal:
-    citation_percentile: 0.35
-    co_citation:         0.25
-    coupling:            0.10
-    semantic:            0.25
-    recency:             0.00
-    author_h:            0.05
-    lexical:             0.00
-  frontier:
-    citation_percentile: 0.05
-    co_citation:         0.05
-    coupling:            0.20
-    semantic:            0.40
-    recency:             0.30
-    author_h:            0.00
-    lexical:             0.00
-  similar:
-    citation_percentile: 0.05
-    co_citation:         0.10
-    coupling:            0.35
-    semantic:            0.40
-    recency:             0.05
-    author_h:            0.00
-    lexical:             0.05
-
-cache:
-  # Cache layers shared across the service.
-  raw_response_ttl_seconds: 300
-  cluster_ttl_seconds: 300
-  embedding_ttl_seconds: 3600
-  feature_matrix_ttl_seconds: 86400
-
 plugins:
   openalex:
     enabled: true

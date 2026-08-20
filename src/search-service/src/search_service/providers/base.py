@@ -42,10 +42,12 @@ class SearchProvider(SourcePlugin):
         filters: dict[str, Any] | None = None,
         subqueries: list[str] | None = None,
         end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
     ) -> list[Any]:
         """Keyword/natural-language search.
 
-        Requires ``search_keyword`` capability.
+        Requires ``search_keyword`` capability. ``native_params`` carries
+        provider-native parameters to merge with the unified request.
         """
         raise NotImplementedError(f"{self.name} does not implement search()")
 

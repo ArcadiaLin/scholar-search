@@ -113,12 +113,21 @@ class SerperClient:
                 now = time.monotonic()
             self._last_request_at = now
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
         """Query Serper and return normalized result items."""
         await self._rate_limit()
         client = await self._get_client()
         q = self.query_template.format(query=query)
         payload = {"q": q, "num": min(top_k, 100)}
+        if native_params:
+            payload.update(native_params)
         headers = {"X-API-KEY": self.api_key, "Content-Type": "application/json"}
         url = f"{self.base_url}/search"
 
@@ -173,9 +182,21 @@ class SerperPlugin(SourcePlugin):
         super().__init__(config)
         self._client = SerperClient(config)
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
         try:
-            return await self._client.search(query, top_k)
+            return await self._client.search(
+                query,
+                top_k,
+                end_date=end_date,
+                native_params=native_params,
+            )
         finally:
             await self._client.close()
 

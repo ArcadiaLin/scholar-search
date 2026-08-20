@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from search_service.models import SearchResultItem
@@ -23,7 +25,14 @@ class MockPlugin(SourcePlugin):
         self._results = results
         self._fail_with = fail_with
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
         if self._fail_with is not None:
             raise self._fail_with
         return self._results[:top_k]

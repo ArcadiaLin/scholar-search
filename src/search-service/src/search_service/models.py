@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -27,49 +27,6 @@ class SearchResultItem(BaseModel):
     source: str = Field(description="Source plugin name that produced this result.")
     source_rank: int | None = Field(default=None, description="Original rank within the source result list.")
     raw: dict[str, Any] | None = Field(default=None, description="Raw source fields retained for debugging.")
-
-
-class SearchRequest(BaseModel):
-    """Request schema for the search endpoints."""
-
-    query: str = Field(description="Search query string.")
-    mode: Literal["metadata", "fulltext"] = Field(default="metadata", description="Search mode.")
-    top_k: int = Field(default=20, ge=1, le=200, description="Maximum number of results to return.")
-    sources: list[str] | None = Field(
-        default=None,
-        description="Optional list of source plugin names to use. Defaults to all enabled plugins.",
-    )
-    timeout_ms: int = Field(
-        default=15_000,
-        ge=500,
-        le=60_000,
-        description="Total wall-clock budget for the search in milliseconds.",
-    )
-
-
-class SourceErrorModel(BaseModel):
-    """Error information for a single source plugin failure."""
-
-    source: str = Field(description="Source plugin name.")
-    error_type: str = Field(
-        description="Error category: timeout, rate_limit, auth, http, parse, disabled, or unknown."
-    )
-    message: str = Field(description="Human-readable error message.")
-
-
-class SearchResponse(BaseModel):
-    """Unified response schema returned by all search endpoints."""
-
-    query: str = Field(description="Original search query.")
-    mode: str = Field(description="Search mode that was executed.")
-    selected_sources: list[str] = Field(
-        default_factory=list, description="Sources that were selected for this request.")
-    results: list[SearchResultItem] = Field(description="Aggregated and deduplicated result list.")
-    total: int = Field(description="Number of deduplicated results.")
-    source_counts: dict[str, int] = Field(description="Counts of results contributed per source.")
-    errors: list[SourceErrorModel] = Field(default_factory=list, description="Failures from individual sources.")
-    elapsed_ms: int = Field(description="Wall-clock time spent in milliseconds.")
-    cached: bool = Field(default=False, description="Whether the response was served from cache.")
 
 
 class SourceHealth(BaseModel):

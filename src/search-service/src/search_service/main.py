@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from search_service import __version__
+from search_service.aggregator import Aggregator
 from search_service.api import providers_router, search_router
 from search_service.config import ServiceConfig
 from search_service.models import HealthResponse
@@ -27,12 +28,15 @@ async def lifespan(app: FastAPI):
     config = ServiceConfig()
     registry = PluginRegistry(config)
     registry.load()
+    aggregator = Aggregator(registry)
 
     _state["config"] = config
     _state["registry"] = registry
+    _state["aggregator"] = aggregator
 
     app.state.config = config
     app.state.registry = registry
+    app.state.aggregator = aggregator
 
     enabled = [p.name for p in registry.get_enabled_plugins()]
     logger.info("Search service started with enabled plugin(s): %s", enabled)

@@ -186,7 +186,14 @@ class ArxivClient:
                 now = time.monotonic()
             self._last_request_at = now
 
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
         """Query arXiv and return normalized result items."""
         await self._rate_limit()
         client = await self._get_client()
@@ -197,13 +204,23 @@ class ArxivClient:
             "sortBy": "relevance",
             "sortOrder": "descending",
         }
+        if native_params:
+            params.update(native_params)
+
+        def _after_end_date(item: SearchResultItem) -> bool:
+            if not end_date or not item.published:
+                return False
+            return item.published > end_date
 
         last_exception: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = await client.get(self.base_url, params=params)
                 response.raise_for_status()
-                return _parse_feed(response.text)
+                items = _parse_feed(response.text)
+                if end_date:
+                    items = [item for item in items if not _after_end_date(item)]
+                return items
             except httpx.TimeoutException as exc:
                 last_exception = exc
                 if attempt == self.max_retries:
@@ -323,9 +340,15 @@ class ArxivPlugin(SearchProvider):
         filters: dict[str, Any] | None = None,
         subqueries: list[str] | None = None,
         end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
     ) -> list[SearchResultItem]:
         try:
-            return await self._client.search(query, top_k)
+            return await self._client.search(
+                query,
+                top_k,
+                end_date=end_date,
+                native_params=native_params,
+            )
         finally:
             await self._client.close()
 

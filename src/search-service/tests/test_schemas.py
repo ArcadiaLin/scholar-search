@@ -15,35 +15,34 @@ from search_service.schemas import (
 )
 
 
-def test_search_request_accepts_openalex_params():
+def test_search_request_accepts_unified_params():
     req = SearchRequest(
-        search="machine learning",
-        filter="publication_year:>2020",
-        sort="cited_by_count:desc",
-        per_page=50,
-        page=1,
+        query="machine learning",
         end_date="2026-06-30",
         top_k=10,
+        sources=["openalex"],
+        provider_params={"openalex": {"filter": "publication_year:>2020", "sort": "cited_by_count:desc"}},
     )
-    assert req.search == "machine learning"
-    assert req.filter == "publication_year:>2020"
-    assert req.per_page == 50
+    assert req.query == "machine learning"
+    assert req.end_date == "2026-06-30"
     assert req.top_k == 10
+    assert req.sources == ["openalex"]
+    assert req.provider_params["openalex"]["filter"] == "publication_year:>2020"
 
 
 def test_search_request_end_date_validation():
     with pytest.raises(ValidationError):
-        SearchRequest(end_date="abc")
+        SearchRequest(query="test", end_date="abc")
 
-    req = SearchRequest(end_date="2026-06-30")
+    req = SearchRequest(query="test", end_date="2026-06-30")
     assert req.end_date == "2026-06-30"
 
 
 def test_search_request_defaults():
-    req = SearchRequest()
+    req = SearchRequest(query="test")
     assert req.top_k == 20
-    assert req.search is None
-    assert req.filter is None
+    assert req.sources is None
+    assert req.provider_params is None
 
 
 def test_passthrough_request_endpoint_and_params():

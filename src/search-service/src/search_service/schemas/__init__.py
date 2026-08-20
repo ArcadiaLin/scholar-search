@@ -19,6 +19,8 @@ from search_service.schemas.paper import (
     FieldProvenance,
     Paper,
     RankedPaper,
+    merge_papers,
+    search_result_item_to_paper,
 )
 from search_service.schemas.requests import PassthroughRequest, SearchRequest
 from search_service.schemas.responses import ProviderInfo, SearchResponse
@@ -50,4 +52,6 @@ __all__ = [
     "SearchRequest",
     "SearchResponse",
     "SearchState",
+    "merge_papers",
+    "search_result_item_to_paper",
 ]

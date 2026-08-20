@@ -37,7 +37,10 @@ def test_search_returns_results(plugin):
                         "ids": {"arxiv": "1706.03762"},
                         "authorships": [{"author": {"display_name": "Ashish Vaswani"}}],
                         "abstract_inverted_index": {"Attention": [0], "mechanisms": [1]},
-                        "primary_location": {"landing_page_url": "https://arxiv.org/abs/1706.03762"},
+                        "primary_location": {
+                        "landing_page_url": "https://arxiv.org/abs/1706.03762",
+                        "source": {"display_name": "arXiv"},
+                    },
                         "open_access": {"oa_url": "https://arxiv.org/pdf/1706.03762.pdf"},
                     }
                 ],
@@ -57,6 +60,7 @@ def test_search_returns_results(plugin):
     assert item.year == 2017
     assert item.abstract == "Attention mechanisms"
     assert item.urls["pdf"] == "https://arxiv.org/pdf/1706.03762.pdf"
+    assert item.venue == "arXiv"
 
 
 @respx.mock
@@ -89,3 +93,23 @@ def test_search_timeout(plugin):
     with pytest.raises(SourceError) as exc_info:
         plugin.search_sync("query", top_k=5)
     assert exc_info.value.error_type == "timeout"
+
+
+@respx.mock
+def test_search_merges_end_date_with_native_filter(plugin):
+    route = respx.get("https://api.openalex.org/works").mock(
+        return_value=Response(200, json={"meta": {"count": 0}, "results": []})
+    )
+
+    plugin.search_sync(
+        "machine learning",
+        top_k=5,
+        end_date="2024-12-31",
+        native_params={"filter": "publication_year:>2020"},
+    )
+
+    assert route.called
+    request = route.calls.last.request
+    filter_param = request.url.params["filter"]
+    assert "publication_year:>2020" in filter_param
+    assert "to_publication_date:2024-12-31" in filter_param

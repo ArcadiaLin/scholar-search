@@ -31,13 +31,31 @@ class SourcePlugin(ABC):
         self.config = config
 
     @abstractmethod
-    async def search(self, query: str, top_k: int) -> list[SearchResultItem]:
-        """Execute a search and return normalized result items."""
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
+        """Execute a search and return normalized result items.
+
+        ``native_params`` contains provider-native query parameters that should
+        be merged with the unified ``query`` and ``top_k`` request.
+        """
         ...
 
-    def search_sync(self, query: str, top_k: int) -> list[SearchResultItem]:
+    def search_sync(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
         """Synchronous wrapper around :meth:`search`."""
-        return asyncio.run(self.search(query, top_k))
+        return asyncio.run(self.search(query, top_k, end_date=end_date, native_params=native_params))
 
     async def healthcheck(self) -> dict[str, Any]:
         """Return optional health metadata."""
@@ -145,12 +163,6 @@ class PluginRegistry:
             instance.name = name
         return instance
 
-    def get_plugin(self, name: str) -> SourcePlugin | None:
-        loaded = self._plugins.get(name)
-        if loaded is None or not loaded.enabled:
-            return None
-        return loaded.instance
-
     def get_enabled_plugins(self, names: list[str] | None = None) -> list[SourcePlugin]:
         """Return enabled plugin instances, optionally filtered by name."""
         result: list[SourcePlugin] = []
@@ -161,13 +173,6 @@ class PluginRegistry:
                 continue
             result.append(loaded.instance)
         return result
-
-    def get_provider_capabilities(self, name: str) -> Any | None:
-        """Return the capability table for a loaded provider, if any."""
-        loaded = self._plugins.get(name)
-        if loaded is None:
-            return None
-        return loaded.capabilities
 
     def list_provider_capabilities(self) -> dict[str, Any]:
         """Return capability tables keyed by provider name."""
