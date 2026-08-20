@@ -11,9 +11,9 @@
 | S0 | 分支、进度骨架、vllm 接入 | DONE | `a069f87` | 用 RPC 无头验收替代交互式 TUI，见决策 D-01 |
 | S1 | extension 骨架与最短链路 | DONE | `6414773` | 途中修了阻断性上游缺陷 U-01（Windows 上任何 extension 都加载不了） |
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
-| S3 | search profile：工具集收紧 | DONE | `8bd31a4` | 正文只放 $SP_M$ 静态部分，检索策略留给 S5 |
+| S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
-| S5 | $NP_0^{agent}$ 条目化 | TODO | | |
+| S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `PENDING_S5` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | TODO | | |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
@@ -365,6 +365,121 @@
      说明 `preference/np-agent.md` 这个相对路径被正确解析到 agent dir 下。
 
 - commit: `d990f67`
+### 2026-08-20 — S5（条目已落地，验收 BLOCKED）
+
+- 做了（条目本身，S5 的落点部分**已完成**）：
+  - `preference/np-agent.md` 推到 `np-version: 1`，**30 条**条目。
+  - 完成了 `05-skill-decomposition.md` §6.1 点名的待办"36 个 `NPa` 标记落成实际条目列表"：
+    - 应用了清单里全部"并入"标注：`CF-Q-04`/`CF-Q-07` → `decompose-by-research-elements`；
+      `CF-S-08`/`CF-Q-17` → `budget-priority`；`CF-B-09`/`CF-B-18` → `direction-coverage`；
+      `DS-I-04` → `rewrite-on-failure`（与 `DS-I-03` 一并）；
+      `DS-C-07` → `seed-for-coverage-not-fame`；`DF-03` → `resolve-ambiguity-before-fetching`；
+      `DS-C-01` 的语义半条也并入 `seed-for-coverage-not-fame`（三条都是"怎么挑种子"）。
+    - 把 `CF-B-21` 的五条 Key Rules 展开成五个独立条目：
+      `read-cocitation-before-expanding` / `one-direction-per-round` /
+      `never-expand-from-noise-hub` / `source-count-follows-quality` /
+      `fill-missing-direction-immediately`。
+    - 结果 30 条，落在清单预估的 25–30 量级内。
+  - 形式符合 `prototype.md` §7.3「落地形式」：每条有 `id` 与正文，`id` 稳定；
+    示例式条目 `decompose-example-cross-community` 带 `kind: example` 与 `origin`
+    （`status: rephrased`）。
+  - **条目里不含任何阈值、预算或数量**。"几条子查询""被引多高算通用经典""预算几次调用"
+    全部不在条目里——那些是 $HP_k$，由工具入参与服务配置承载。条目只写语义。
+    文件开头明确写了这条纪律。
+  - 许可证前置条件：条目是对策略思想的重述与重新分层，不是 MetaScientist skill 原文的
+    逐字复制（原文是英文，条目是重写后的中文分层表述）。
+
+- 途中发现并修了 S3 的一处违规（`8559903`，单独 commit）：
+  profile 正文里有两段其实是策略而不是协议——一段等于 `diagnose-before-act`，
+  一段等于 `rewrite-on-failure`。这正是路线图 §3 S3 警告的那种泄漏：
+  策略留在正文里，"全关"组也仍然带着它。已改为只陈述接口事实。
+
+### 注入点决策（D-07）见决策记录
+
+### 验收：**未通过**。
+
+路线图 S5 的验收判据是"关掉全部条目与打开全部条目，同一查询的轨迹形状**明显不同**"。
+**做不到**——不是"轨迹相同"，而是**同一配置下的轮次方差本身就比两组之间的差异大**。
+
+测量设置：同一个查询（"diffusion models for molecular conformer generation,
+nothing after 2024-06-30"）、同一个模型（`vllm/qwen3.6-35b-a3b`）、
+同一个 Service（127.0.0.1:8125，打真实 OpenAlex + arXiv）。
+"全关"的操作方式是按 `preference/README.md` 的约定把 `projectContext` 从
+`profiles/search.md` 去掉。
+
+轨迹形状用三个量刻画：工具调用总数、turn 数、各工具调用次数。
+
+| 组 | profile 正文 | 工具调用数 | turns | 各工具 |
+| --- | --- | --- | --- | --- |
+| 全关 run1 | 泄漏未修 | 7 | 6 | search_metadata 4, get_paper 3 |
+| 全关 run2 | 泄漏未修 | 37 | 24 | search_metadata 17, get_paper 18, list_providers 1, provider_query 1 |
+| 全关 run3 | 泄漏未修 | 20 | 19 | search_metadata 15, get_paper 4, list_providers 1 |
+| 全关 run4 | 已修 | 35 | 23 | search_metadata 11, get_paper 18, list_providers 1, provider_query 5 |
+| 全关 run5 | 已修 | 18 | 12 | search_metadata 9, get_paper 9 |
+| 全开 run1 | 泄漏未修 | 22 | 15 | search_metadata 10, get_paper 11, list_providers 1 |
+| 全开 run2 | 已修 | 36 | 30 | search_metadata 10, get_paper 9, list_providers 1, provider_query 16 |
+| 全开 run3 | 已修 | 40 | 25 | search_metadata 20, get_paper 19, list_providers 1 |
+
+全关的调用数落在 **7–37**，全开落在 **22–40**。两个区间大面积重叠，
+n=3/组的情况下任何"明显不同"的结论都是在读噪声。
+
+（`sampling` 没有被固定：`settings.json` 里没有 temperature 设置，
+所以每一轮都是随机的。这是方差的最可能来源。）
+
+#### 试过的、更锐利的观察量，也不成立
+
+用调用总数当判据太钝，所以换了一个**单条条目的可证伪预测**：
+`seeded-entry-skips-recall` 说"提问者已给种子论文时跳过关键词检索，直接从种子出发"。
+观察量是**第一个检索调用是 `get_paper` 还是 `search_metadata`**——二值、低噪声、
+可直接归因到这一条。
+
+提问："I already have the key paper for this topic: arXiv 2206.01729.
+Find me the closely related literature. Nothing published after 2024-06-30."
+
+结果：**全关组 3/3 的第一个调用都是 `get_paper`**。
+基线本来就会从种子出发，这一条条目没有作用空间——天花板效应，
+这个观察量同样无法区分两组。
+
+#### 结论与还需要什么
+
+按 `05-skill-decomposition.md` §0，验收不通过有两种可能的解释，我能区分掉一部分：
+
+- **"策略还藏在 profile body 里"**：确实存在，已经找到并修掉两段（`8559903`）。
+  但修完之后（run4/run5 vs run2/run3）区间依然重叠，所以这不是全部原因。
+- **"策略藏在工具序列里"**：不成立。工具是无状态的单次调用，
+  没有任何固定管线被编码进去——全关组的调用顺序在 6 次运行里各不相同。
+
+我判断真正的原因是第三种，路线图没有列出的一种：**测量本身不成立**。
+在这个模型、这个采样设置下，轨迹形状的轮内方差量级与"策略先验是否在场"的效应量相当或更大。
+这不是"策略没有作用面"的证据，而是"这个实验设计测不出作用面"的证据——两者结论完全不同，
+不能混为一谈。
+
+**卡在哪**：无法用当前的实验设计给出 S5 验收的是或否。
+
+**试过什么**：见上表 8 次真实运行（另有 3 次种子查询运行、1 次换查询的对照），
+共 12 次；两种观察量（总量型与二值型）；修掉 profile 正文的策略泄漏后重测。
+
+**需要什么才能解**（要用户决定，我不替用户定）：
+
+1. **固定采样**。`settings.json` 里没有 temperature/seed。把它固定下来
+   （或改用贪心解码）是最便宜的降方差手段，可能直接让 n=3 变得够用。
+   我没有动它——`defaultProvider`/`defaultModel` 这类属于用户偏好，S0 就已经定下不擅自改。
+2. **确定重复次数与判据**。若维持随机采样，按目前方差，要检出小于 2 倍的效应
+   大致需要每组 n≥15–20。这是十几到几十分钟量级的真实 API 调用，
+   需要用户确认这个预算可以花。
+3. **或者换一个基线会失败的观察量**。我选的 `seeded-entry-skips-recall`
+   撞了天花板。需要挑一条**基线明确做不到**的条目来做判据——
+   候选是 `never-expand-from-noise-hub` 或 `growth-is-not-success`，
+   但这两条都要 `expand_citations`（S7 才注册），
+   所以更锐利的判据可能本来就应该排在 S7 之后。
+
+最后一点值得单独说：**S5 的验收也许本来就依赖 S7**。
+30 条条目里有 11 条讲的是引文扩展与种子选择，而 `expand_citations`
+在 S7 才注册——也就是说当前有三分之一的条目根本没有可作用的工具。
+这是路线图线性依赖假设的一处漏洞，不是执行上的失误，但它确实影响验收能不能成立。
+
+- commit: `PENDING_S5`
+
 
 
 
@@ -373,6 +488,36 @@
 
 stage 执行中做出的、路线图没有规定的选择，记在这里（含理由）。
 不要推翻已记录的决策，除非它被证明是错的。
+
+### D-07 — $SI_k$ 的注入点选 `projectContext` 静态注入，不选 `input` interceptor
+
+路线图 S5 要求在两者中选一个并写明理由。选 **`projectContext` 静态注入**。
+
+理由：
+
+1. **它已经被验证可用，且不需要写代码。** S4 的验收就是这条路径：
+   模型逐字引用了注入文件里的 `np-version`，0 次工具调用。
+   `AGENTS.md` §3.2 禁止预建无调用方的框架——interceptor 现在没有
+   `projectContext` 做不到的事。
+2. **消融操作面正好匹配。** S5 的验收要求"全关 vs 全开"。
+   `projectContext` 下这是一次配置改动（去掉那一行）或一次文件改动，
+   两者都留在 git diff 里可审计。interceptor 要另造一个开关，
+   而那个开关自己又不在版本控制的语义里。
+3. **interceptor 会引入一个正确性风险而当前换不来收益。**
+   `SKILL.md` §6 明确 `input` interceptor 也会收到 agent 与 runtime 注入的消息，
+   必须检查 `event.source`。漏检就会把条目重复注入进每一条中间消息，
+   或者把 agent 自己的输出当成 RQ。为一个当前没有额外能力的路径承担这个风险不划算。
+
+关于 $SI_k = \mathrm{Compose}(RQ, NP_k^{agent})$ 的形式：
+`projectContext` 把 $NP_k$ 放进系统提示词，$RQ$ 作为用户消息到达，
+模型的实际输入是两者的函数——Compose 在语义上成立，
+不要求两者被拼接成同一个字符串。
+
+**什么时候必须改成 interceptor**（记下来，免得将来重新论证）：
+出现"每个 episode 生效的条目集合不同"的需求时。具体是两种情况——
+Reviewer 在 episode 中途改写条目集合（S8），
+或者按 $\theta^S_k$ 过滤条目。这两种都需要在请求时点动态组装，
+静态注入做不到。到那时再切换，并且在 progress 里注明是这条决策被触发了。
 
 ### D-06 — S2 允许改 `src/search-service/`，而且必须改
 
