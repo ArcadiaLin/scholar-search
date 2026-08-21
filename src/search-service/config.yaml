@@ -28,6 +28,33 @@ limits:
     max_sections: 20
     max_section_chars: 2000
 
+# LLM providers for the /judge forwarding endpoint. Keys are arbitrary names;
+# the endpoint selects one by name or falls back to ``default``.
+#
+# Default provider mirrors the ``vllm`` entry in
+# ``widis/.widi-scholar/agent/models.json``.
+llm_providers:
+  default: vllm
+
+  providers:
+    vllm:
+      type: openai-compatible
+      base_url: "http://192.168.163.112:8003/v1"
+      # The upstream WIDI config uses "EMPTY" for key-less vLLM.
+      api_key: "EMPTY"
+      model: "qwen3.6-35b-a3b"
+      timeout: 60.0
+      max_retries: 2
+
+    openai:
+      type: openai-compatible
+      base_url: "https://api.openai.com/v1"
+      # Leave empty to read from OPENAI_API_KEY environment variable.
+      api_key: ""
+      model: "gpt-4o-mini"
+      timeout: 60.0
+      max_retries: 3
+
 plugins:
   openalex:
     enabled: true
