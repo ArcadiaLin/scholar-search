@@ -13,7 +13,7 @@
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
-| S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `PENDING_S5FIX` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
+| S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
@@ -626,7 +626,7 @@ shim 不提交——它是实验器材，不是产物，与 D-01 里 RPC 冒烟�
    要让它变成仓库里可复现的能力，只有一条路：给 WIDI 接通采样参数
    （见上，需要用户明确授权改 vendored 的 Pi fork）。这条记在下方 U-03。
 
-- commit: `PENDING_S5FIX`
+- commit: `4b46427`
 
 
 
