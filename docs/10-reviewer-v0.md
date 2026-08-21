@@ -1,9 +1,19 @@
 # Reviewer v0 与 $NP_0$ 重写：从三次真实会话推出来的设计
 
-> 状态：设计，尚未执行。stage 定义在 §6（S11），三个关键决策在 §7
+> 状态：设计，尚未执行。stage 定义在 §6（S11），关键决策 D-10..D-12 / D-14 / D-15 在 §7
 > 读者：要实现 Reviewer 第一版、或要写 $NP_0^{agent}$ 条目的人
 > 前置：`design.md` §5.2（四个 checkpoint）、`prototype.md` §7.2（Reviewer 工具集）、
 > `08-retrieval-defects.md`（F-1..F-11 与行为观察 B-1..B-5）、`09-next-stages.md`（S10）
+
+**路径约定**：本文出现的裸文件名按下表还原，正文不再重复前缀。
+
+| 写法 | 实际路径 |
+| --- | --- |
+| `index.ts` / `core/*.ts` | `widis/.widi-scholar/extensions/scholar-search/` 下 |
+| `profiles/*.md` / `preference/*.md` | `widis/.widi-scholar/` 下 |
+| `config.yaml` | `src/search-service/config.yaml`（**只有这一份**，属于 Python 服务） |
+| `run.mjs` | `experiments/eval-runner/run.mjs` |
+| `extensions.md` / `orchestrator.md` | `packages/widi/apps/widi/docs/` 下 |
 
 本文的每一条设计都有会话证据支撑，证据内嵌（`runs/` 被 gitignore）。
 **最重要的一条是负结果**：一次手工的 $NP$ 消融显示，
@@ -246,21 +256,39 @@ novelty key 去重）过滤。检测器不绕过 gate。
    一个记得"我上一个 checkpoint 已经提过多样性"的 Reviewer，
    比一个每次从零开始、靠 gate 的 novelty key 去重的 Reviewer 更接近设计意图。
 
+**启动机制**：挂在 `agent_spawned` 上，条件是 `event.profile.id === "search"`。
+
+`agent_spawned` 的载荷带 `profile: AgentProfile` 与 `spawnedBy?: AgentId`
+（`packages/widi/apps/widi/src/core/types.ts:232`），所以规则可以写成一句：
+**search agent 一建立，就给它附一个 Reviewer。**
+
+递归是这条规则自动挡掉的，不需要额外状态。spawn/idle 一类事件
+**向同一 agent tree 广播**（`packages/widi/apps/widi/docs/extensions.md:167`），
+因此 Reviewer 自己的 `agent_spawned` 也会回到同一个 observer——
+但它的 `profile.id` 是 `reviewer`，条件不成立，不会再生一个。
+这比"维护一张 `reviewerToSubject` 表再查"更可靠，因为同一行文档还写着
+**"事件到达顺序不保证；尤其处理其他 agent 时，必须容忍先收到状态事件、后收到
+`agent_spawned`"**——任何依赖"先建表再判断"的守卫都可能来不及，
+而按 `profile.id` 判断是**无状态**的，与顺序无关。
+
 **三条机械约束**（核过 WIDI 的 orchestrator 契约，不要在实现时才发现）：
 
 - **Reviewer 是 search 的子 agent，不是并列的第二个 main agent。**
-  `apps/widi/docs/extensions.md` §"向模型发送文本"写明
+  `packages/widi/apps/widi/docs/extensions.md` §"向模型发送文本"写明
   "`spawnAgent` 只会创建当前 agent 的子 agent"。这不影响任何设计属性——
   父子关系是**会话目录嵌套**（持久化事实），不是上下文共享；
   $C^R_t \neq C^M_t$ 照样成立，agent strip 里显示为一棵树，用户照样能切过去。
-- **`prompt` 要求目标空闲，忙时拒绝而不排队。** 如果 Main 连续两次更新答案池，
+- **`prompt` 要求目标空闲，忙时拒绝而不排队。** 这条只影响
+  **extension → Reviewer** 这个方向（投递轨迹）：Main 连续两次更新答案池时，
   第二次投递会被拒。必须在 extension 侧排队或跳过，并把跳过记进 gate 的拒绝日志——
   一条被静默丢掉的 review 触发，和一次从未发生的触发长得一模一样。
+  **反方向（Reviewer → Main 的建议）没有这个问题**，见 §5.2d。
 - **Reviewer 的生命周期 = Main 的 episode，不是 session。**
   TUI 里一个 session 通常就是一个 episode，两者重合；但 eval runner
-  **每条查询 spawn 新 Main**（`run.mjs` 的注释写明理由：共享上下文会让
+  **每条查询 spawn 新 Main**（`run.mjs:208` 的注释写明理由：共享上下文会让
   查询 N 看到查询 N-1）。Reviewer 若跨查询存活，就会把这条隔离破坏掉。
-  实现上：Reviewer 跟着它所审查的 Main 一起 spawn、一起 dispose。
+  按上面的启动机制，这是**自动满足**的：每个 search agent 的 `agent_spawned`
+  各配一个 Reviewer，随所审查的 Main 一起 dispose。
 
 ### 5.2c Reviewer 拿细节靠"拉轨迹"，不是"读 Main 的上下文"
 
@@ -296,6 +324,82 @@ novelty key 去重）过滤。检测器不绕过 gate。
 这一处扩宽走 `core/trajectory.ts` 的 `COLLECTED_EVENTS` 白名单，
 记成决策，不要顺手加。
 
+### 5.2d 建议是"一条一发的消息"，不是"一池一推的清单"
+
+**先说当前实现里的一个坑**，常驻化之后它会立刻发作。
+
+`AdviceGate.admitted()` 返回的是**累计全量**——`core/review.ts:84` 的注释就写着
+"Everything admitted, in order"。而 `index.ts:486` 在每次 review 结束时取的正是
+`gate.admitted()` 的全量，拼成编号清单一次性 `precede` 给 Main。
+
+现在不出问题，只因为 Reviewer 每次新起、gate 也跟着新建，一个 gate 只服务一次 review。
+**改成常驻之后 gate 只有一个**：第三个 checkpoint 会把前两次已经投递过的建议再投一遍，
+第六个 checkpoint 投六遍。Main 会看到同一条建议反复出现——
+而 §2.3 已经证明这个模型对重复内容的反应是复述而不是执行。
+
+**正确形态**：参照 WIDI 原生 `send_message` 的语义——**Reviewer 给 search agent 发消息**，
+一条建议一条消息，在它被 gate 放行的那一刻发出，不攒池子。
+
+原生工具的语义是（`packages/widi/apps/widi/src/core/tools/agents/send-message.ts:93`）：
+
+> "delivers the text and returns once the other agent has it; **that agent reads it on its
+> next turn**" —— 并且 "send\_message **never waits for a reply**"。
+
+**extension 侧已经有语义完全相同的原语，就是 `precede`。** `index.ts:498` 的注释
+早就说明了为什么选它而不是 `prompt` / `followUp`："advice is context for work not yet
+started"——投进下一轮上下文、不唤醒、不等回复。所以**这里不需要新机制，
+需要改的是载荷和时机**：
+
+| | 现在 | 改成 |
+| --- | --- | --- |
+| 载荷 | `gate.admitted()` 全量清单 | 刚被放行的**那一条** |
+| 时机 | review 结束时 | `provide_advice` 放行的当下 |
+| 次数 | 每次 review 一次，内容累积 | 每条建议一次，内容不重复 |
+
+**为什么不直接把原生 `send_message` 加进 Reviewer 的 `tools:`。**
+那样建议就**绕过了 gate**——动作白名单、证据引用检查、novelty 去重、
+长度上限（`DEFAULT_MAX_INSTRUCTION_CHARS = 1_000`）全部失效，
+而这些正是 `design.md` 要求"建议是**有界**的"所指的东西。
+所以工具仍然是 `provide_advice`：**它就是"发消息"的受闸版本**，
+Reviewer 的动作语义不变，变的只是 extension 在放行之后立刻投递一条，而不是最后推一池。
+
+副带的好处：`prompt` 忙时被拒的问题在这个方向上不存在——
+`precede` 写的是下一轮上下文，不要求 Main 空闲。§5.2b 第二条只对
+extension → Reviewer 那个方向成立。
+
+### 5.2e 阈值放 Service 侧的 `config.yaml`，逻辑留在 extension（决策 D-15）
+
+**先纠正一处会让实施者卡住的说法。** 本文早先写"检测器阈值进 `config.yaml`
+作为 $HP$ 落位"，但：
+
+- `config.yaml` 只有一份，在 `src/search-service/`，顶层键是
+  `service` / `limits` / `llm_providers` / `plugins`，它是 **Python 服务**的配置；
+- 检测器要写在 `core/review.ts`，是 **TypeScript extension**；
+- extension 的配置来源**全部是环境变量**（`SCHOLAR_TRACE_DIR` / `SCHOLAR_REVIEWER` /
+  `SCHOLAR_REVIEWER_MODEL`），代码里一次 yaml 都没有。
+
+也就是说，原来那句话指的是一条**不存在的通路**。
+
+**决定**：阈值确实应该纳入 Service 侧——它们是 $HP_k$，
+而 $HP_k$ 的唯一权威载体就是 `config.yaml`（$\theta^S_k = \mathrm{Configure}(P, HP_k, NP_k^{judge})$
+这条边的起点在那里）。散在环境变量里会让 $HP$ 搜索无从下手。
+
+- `config.yaml` 新增 `review:` 段，放 R1–R7 的阈值（含 R2 的 Jaccard）；
+- Service 新增一个只读端点返回该段，extension 在 spawn Reviewer 时取一次；
+- `service-client.ts` 增加对应方法，与已有的 `getBudget()` 同形。
+
+沿用 D-13 的口径：**多一次 API 调用是明确接受的**，一个 episode 只调一次。
+
+**但检测器的逻辑留在 `core/review.ts`，不搬进 Service。** 这条要写清楚，
+否则后来的人会以为"既然阈值都去 Service 了，逻辑也该去"，然后动手搬：
+
+检测器读的是 `PublicSearchTrace`——一个由 WIDI 事件流装配出来的
+**extension 侧类型**（`core/trajectory.ts`）。把检测器搬进 Service，
+就必须在 Python 里镜像一份它的 schema，于是 Service 被绑死在 WIDI 的事件形状上。
+`search-service.md` 开篇立的规矩是"只描述接口、机制与边界，
+**不绑定任何具体数据源、算法或指标**"，这个耦合正好撞上它。
+阈值是数据，跨进程传是廉价的；轨迹是结构，跨进程传要复制 schema。
+
 ### 5.3 触发时机
 
 这是 G-1 的正面修法。当前 review 挂在 `agent_idle` 上、
@@ -318,7 +422,25 @@ checkpoint——"Main 刚刚承诺了一批论文"正对上 `design.md` §5.2 �
 - ④ 生成最终 $SO$ 之前 = **S10 的答案池给出的新钩子**——
   agent 首次写入答案池、或 `agent_idle` 之前，见 §5.4。
 
-`MAX_REVIEWS_PER_AGENT` 相应从 1 提到与 gate 的 episode 上限一致（6）。
+**`MAX_REVIEWS_PER_AGENT` 取消，不保留、也不改成别的数（决策 D-14）。**
+
+原先写的是"从 1 提到与 gate 的 episode 上限一致（6）"，这是把两个不同的量当成了一个：
+
+| 量 | 计什么 | 谁在管 |
+| --- | --- | --- |
+| `MAX_REVIEWS_PER_AGENT` | review **轮次** | `index.ts:272`，本次取消 |
+| `DEFAULT_MAX_PER_EPISODE = 6` | 放行的**建议条数** | `core/review.ts:38`，保留 |
+
+两者都设成 6 会得到一个坏结果：第一个 checkpoint 若一次吐满 6 条，
+就把整个 episode 的建议预算耗尽，后面五次触发全部空转——
+**而越靠后的 checkpoint 掌握的轨迹越多，建议本该越准。**
+
+正确的边界只有一个：**限建议条数，不限观察次数。** 让 Reviewer 想看多少次看多少次，
+真正流向 Main 的东西由 gate 管住。这也更贴合"Reviewer 是旁路观察者"的定位——
+观察本身不该有配额，介入才该有。
+
+（触发次数的天然上限来自检测器的形状：R1–R7 各自只在条件
+**从未触发变为触发**时投递一次，见本节下文。所以轮次不会无界增长。）
 
 **为什么必须保留触发源二，而不是只用答案池。** 答案池更新是 Main 的动作，
 如果它是唯一触发源，Main 就**间接控制了介入率**——不写池子就不被审查。
@@ -341,8 +463,14 @@ R2（查询单调）现在只能看查询词的重叠，这是个弱代理；
 比"子查询词重叠率高"强得多。
 
 所以 §5.2 的检测器表里，R2 与 R6 在 S10 之后应当升级为读答案池。
-**但 v0 不等 S10**：七个检测器全部只用现有字段就能实现，
-先落地再升级，避免两个 stage 互相阻塞。
+
+**"检测器不依赖 S10"不等于"S11 可以排在 S10 之前"。** 顺序仍然是
+S10 → S11（`09-next-stages.md` §1）。这里说的是**降级路径**：
+七个检测器只用 $\bar{\tau}_t$ 的现有字段就能实现，
+所以万一 S10 延期，S11 的检测器部分不被阻塞。
+但 §5.3 的**触发源一（答案池更新）确实依赖 S10**，
+它是 D-11 的一半——只做检测器就只有触发源二，
+$\Delta_{\mathrm{sidecar}}$ 的归因论证不完整。
 
 ### 5.5 v0 明确不做的事
 
@@ -368,16 +496,39 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
 
 **落点**：
 
-- `core/review.ts` 新增七个检测器（纯函数，与 gate 同文件同风格）
-- `index.ts`：Reviewer 改为在 `agent_spawned` observer 里起、episode 全程常驻
-  （§5.2b），review 触发从 `agent_idle` 移到 `tool_execution_end` 与
-  `update_answer_pool` 两处，`MAX_REVIEWS_PER_AGENT` 提到 6
-- `core/trajectory.ts`：`TraceEvidence` 增加摘要/主题字段（§5.2c 的唯一一处白名单扩宽）
-- `renderTraceForReviewer` 增加 `DETECTED CONDITIONS` 段
-- `config.yaml`：检测器阈值（含 R2 的 Jaccard，先取 0.5）作为 $HP$ 落位
-- `preference/np-agent.md` 按 §4 重写并分成两组（§7 决策 D-12）
-- `preference/README.md` 补写作规程（§3.1 的两条纪律）
-- `scripts/widis-quality.mjs` 增加 §3.1 纪律二的 lint
+路径按仓库根写全，不要只写文件名。extension 的三个文件都在
+`widis/.widi-scholar/extensions/scholar-search/` 下。
+
+**extension 侧**
+
+- `core/review.ts`：新增七个检测器（纯函数，与 gate 同文件同风格）
+- `index.ts`：Reviewer 改为在 `agent_spawned` observer 里起，条件
+  `event.profile.id === "search"`，episode 全程常驻（§5.2b）；
+  review 触发从 `agent_idle` 移到 `tool_execution_end` 与 `update_answer_pool` 两处；
+  **删除 `MAX_REVIEWS_PER_AGENT`**（`index.ts:272`，决策 D-14）；
+  建议投递改为**每条放行即发一条**，不再取 `gate.admitted()` 全量（§5.2d）
+- `core/trajectory.ts`：`TraceEvidence` 增加摘要/主题字段
+  （§5.2c 的唯一一处白名单扩宽）
+- `core/review.ts` 的 `renderTraceForReviewer`：增加 `DETECTED CONDITIONS` 段
+- `core/service-client.ts`：增加读取 `review:` 配置段的方法，与 `getBudget()` 同形
+
+**Service 侧**
+
+- `src/search-service/config.yaml`：新增 `review:` 段，放 R1–R7 的阈值
+  （含 R2 的 Jaccard，先取 0.5）作为 $HP$ 落位（§5.2e）
+- `src/search-service/src/search_service/api/`：新增只读端点返回该段
+
+**配置与偏好**
+
+- `widis/.widi-scholar/profiles/reviewer.md`：`whenToUse` 现在写的是
+  "extension starts it **at a review checkpoint**"，与常驻矛盾，需改写；
+  `tools:` 保持 `[provide_advice, inspect_evidence, get_ranking_features]`
+  **不变**——尤其不要加原生 `send_message`，理由见 §5.2d
+- `widis/.widi-scholar/preference/np-agent.md`：按 §4 重写并分成两组（决策 D-12）
+- `widis/.widi-scholar/preference/README.md`：补写作规程（§3.1 的两条纪律）
+- 纪律二的 lint：**注意 `scripts/widis-quality.mjs` 是 biome 的驱动器**
+  （对各 namespace 跑 lint / format / typecheck），它不检查 markdown 正文。
+  这条 lint 要作为独立检查步加进去，不是往现有规则里塞一条
 
 **做什么**：见 §4、§5。检测器的阈值来自配置，不硬编码
 （`design.md` §4：一个硬编码的边界无法为实验收窄）。
@@ -392,10 +543,14 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
    这是 G-1 的正面判据）；
 3. gate 的拒绝记录里能看到检测器重复触发被 novelty key 挡下的条目
    （说明检测器接在 gate 之内，没有绕过）；
-4. `np-agent.md` 的**绑定组**每条都能指出它对应 $\bar{\tau}_t$ 的哪个字段，
+4. 一个 episode 内触发三次以上 review，Main 收到的建议**没有一条重复**——
+   这条直接验 §5.2d：投递的是刚放行的那一条，不是 `gate.admitted()` 的累计全量；
+5. Reviewer 常驻期间，`agent_spawned` 只为 `profile.id === "search"` 的 agent
+   配 Reviewer，**一个 episode 里 Reviewer 恰好一个**（验 §5.2b 的递归防护）；
+6. `np-agent.md` 的**绑定组**每条都能指出它对应 $\bar{\tau}_t$ 的哪个字段，
    且满足 D-12 的可绑定判据（关掉它轨迹会不同）；
-5. lint 能拦下一条含 arXiv id 的条目；
-6. TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
+7. lint 能拦下一条含 arXiv id 的条目；
+8. TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
    **没有** Main 的私有推理（沿用 S8 的逐片段查证方法，leaks = 0）。
 
 **这些判据不检验什么**：建议的**质量**，以及 Main 是否采纳。
@@ -408,7 +563,7 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
 
 ---
 
-## 7. 三个决策（原"尚未决定的问题"，2026-08-22 定）
+## 7. 决策（原"尚未决定的问题"，2026-08-22 定）
 
 ### D-10 — Reviewer 常驻，随 search agent 一起启动
 
@@ -451,21 +606,36 @@ P 轴作用在一个良定义的集合上；B → A 的提升成为一条具体�
 
 落地时把 A / B 的划分结果同步进 `experiments.md` 的 P 轴定义。
 
+### D-14 — 取消 `MAX_REVIEWS_PER_AGENT`，只限建议条数
+
+见 §5.3。轮次与条数是两个量，把两者都设成 6 会让第一个 checkpoint
+吃光整个 episode 的建议预算。观察不设配额，介入才设配额。
+
+### D-15 — 检测器阈值进 Service 的 `config.yaml`，检测器逻辑留在 extension
+
+见 §5.2e。阈值是 $HP_k$，唯一权威载体是 `config.yaml`，每 episode 取一次；
+逻辑不搬，因为搬了就要在 Python 里镜像 `PublicSearchTrace` 的 schema，
+把 Service 绑死在 WIDI 的事件形状上。
+
+> 另有 **D-13**（答案池的身份归一通路）记在 `09-next-stages.md` §2.3b 与 §4，
+> 因为它属于 S10 的落地决定。
+
 ---
 
 ## 8. 剩余的实现期风险
 
 不是未决问题，是**已知会在实现时咬人的地方**，按顺序排：
 
-1. **`prompt` 忙时被拒**（§5.2b 第二条）。最可能的表现是：
-   Main 连续两次写池子，第二次 review 静默消失。
+1. **`prompt` 忙时被拒**（§5.2b 第二条）。**只在 extension → Reviewer
+   这个方向**（投递轨迹）；反方向的建议走 `precede`，不受影响（§5.2d）。
+   最可能的表现是：Main 连续两次写池子，第二次 review 静默消失。
    **必须显式排队或显式记录跳过**，不能让它变成"看起来没触发"。
 2. **常驻 Reviewer 的上下文会涨**。六次 checkpoint 各投递一次完整轨迹，
    到后期上下文里有六份高度重复的 trace。
    建议投递**增量**（自上次 checkpoint 以来新增的调用与证据）+ 一份当前汇总，
    而不是每次重发全量。这不影响 $C^R_t$ 的语义。
 3. **R2 的 Jaccard 阈值 0.5 没有依据**，是跑通用的占位值。
-   它属于 $HP_k$，进 `config.yaml`，**不要写进代码**；
+   它属于 $HP_k$，落位与取用的通路见 §5.2e（D-15），**不要写进代码**；
    定值留给 $HP$ 的搜索阶段。
 4. **白名单扩宽有滑坡风险**。§5.2c 批准的是**一处**扩宽
    （`TraceEvidence` 加摘要/主题）。之后每一次"Reviewer 还想看点别的"

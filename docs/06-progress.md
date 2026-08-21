@@ -1180,6 +1180,22 @@ backward 扩展基本不可用，E 轴的默认方向要改成 forward）。
 stage 执行中做出的、路线图没有规定的选择，记在这里（含理由）。
 不要推翻已记录的决策，除非它被证明是错的。
 
+**S10 起的决策先写在各自的 stage 文档里，落地时回填到本节**：
+D-08 / D-09 / **D-13** 在 `docs/09-next-stages.md` §4，
+D-10 / D-11 / D-12 / **D-14** / **D-15** 在 `docs/10-reviewer-v0.md` §7。
+2026-08-22 定的三条新决策一句话各是：
+
+- **D-13** — 答案池的身份归一提成 Service 公开函数 `canonical_key()`，
+  作为 `canonical_id` 字段随 `get_paper` 返回；`add` 时多一次 API 调用是明确接受的。
+  起因是发现 `merge_papers` 并不是身份归一算法（它只做字段合并），
+  真正的规则是 `aggregator.py:111` 的一行内联表达式。
+- **D-14** — 取消 `MAX_REVIEWS_PER_AGENT`。review 轮次与建议条数是两个量，
+  只对后者设上限：观察不设配额，介入才设配额。
+- **D-15** — 检测器阈值进 `src/search-service/config.yaml` 的 `review:` 段
+  （$HP_k$ 的唯一权威载体），检测器逻辑留在 `core/review.ts`——
+  搬进 Service 就要在 Python 里镜像 `PublicSearchTrace` 的 schema，
+  把 Service 绑死在 WIDI 的事件形状上。
+
 ### D-07 — $SI_k$ 的注入点选 `projectContext` 静态注入，不选 `input` interceptor
 
 路线图 S5 要求在两者中选一个并写明理由。选 **`projectContext` 静态注入**。

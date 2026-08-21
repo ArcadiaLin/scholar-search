@@ -8,6 +8,18 @@
 > **S11（Reviewer v0 与 $NP_0$ 重写）的定义不在本文**，在 `10-reviewer-v0.md`。
 > 完整顺序：F-1/F-2/F-10 → S10 → S11 → S12。
 
+**路径约定**：正文出现的裸文件名按下表还原，不再重复前缀。
+
+| 写法 | 实际路径 |
+| --- | --- |
+| `index.ts` / `core/*.ts` | `widis/.widi-scholar/extensions/scholar-search/` 下 |
+| `preference/*.md` | `widis/.widi-scholar/preference/` 下 |
+| `config.yaml` | `src/search-service/config.yaml`（**只有这一份**，属于 Python 服务） |
+| `run.mjs` | `experiments/eval-runner/run.mjs` |
+| `aggregator.py` / `schemas/paper.py` / `api/*.py` | `src/search-service/src/search_service/` 下 |
+
+---
+
 `06-widi-scholar-roadmap.md` 的 S0–S9 已经全部执行完，它记的是**已经走过的路**。
 本文另起一篇而不是往那份文件后面追加，理由有二：
 
@@ -72,10 +84,17 @@ S11 的检测器直接针对这一点。
 
 **落点**：
 
-- extension 新增工具 `update_answer_pool`，落盘 `${agentId}.answer.json`
+- Service 侧：`src/search-service/src/search_service/schemas/paper.py` 提出
+  `canonical_key()` 并给 `Paper` 加 `canonical_id` 字段；
+  `aggregator.py` 的 `_deduplicate` 改调它（见 §2.3b）
+- extension 侧：`widis/.widi-scholar/extensions/scholar-search/index.ts` 新增工具
+  `update_answer_pool`，落盘 `${agentId}.answer.json`
   （与现有的 `${agentId}.json` / `${agentId}.review.json` 同目录、同命名族）
 - `experiments/eval-runner/` 新增 AutoScholarQuery → queries 文件的转换脚本
-  与按 `answer_arxiv_id` 计算 Recall@k 的评分脚本
+  与按 `answer_arxiv_id` 计算 Recall@k 的评分脚本。
+  数据在 `references/datasets/pasa/AutoScholarQuery/{train,dev,test}.jsonl`，
+  每行的字段是 `question` / `answer` / `answer_arxiv_id` / `source_meta.published_time` / `qid`；
+  `published_time` 就是 F-5 要求传给 `end_date` 的那个边界
 
 **做什么**：见 §2.1–§2.5。
 
@@ -164,12 +183,57 @@ per-query spawn 新 agent（`run.mjs` 的注释写明了理由：共享上下文
 每条查询的数字随之失去意义。现有代码已经做对了（`index.ts:298` 写
 `${trace.agentId}.json`），照抄即可。
 
-**身份归一经 Service，不在 extension 里自己做。** `add` 时把 id 送给 Service
-取规范 id，再落盘。这是 §2.2 第 2 条的直接后果，也是唯一一处不能图省事的地方。
+**身份归一经 Service，不在 extension 里自己做。** 这是 §2.2 第 2 条的直接后果，
+也是唯一一处不能图省事的地方。具体通路见 §2.3b——**它比原先设想的要多一步，
+因为现成的那个函数并不是身份归一算法。**
 
 **池子不取代散文。** $SO$ = 散文答案 + 池子。池子是**可引用的底料**，散文才是回答。
 2026-08-21 那次会话的方向分组（Superpixel Transformer / Region-based AL / …）
 是有信息量的，全塌成平铺列表就丢了。每条的 `why` 字段承载这部分结构。
+
+### 2.3b 身份归一的实际通路（2026-08-22 定，决策 D-13）
+
+**先说一个纠正**：本文早先把 `merge_papers` 说成"Service 已经实现的身份归一算法"，
+这是不准确的，照着做会卡住。核过源码之后的实际情况：
+
+| 以为的 | 实际的 |
+| --- | --- |
+| `merge_papers` 做身份归一 | 它只做**字段合并**——把**已经判定为同一篇**的多条记录并成一条（`schemas/paper.py:160`） |
+| Service 有归一入口 | 身份判定是 `aggregator.py:111` 的一行内联表达式，在私有方法 `_deduplicate` 里，不是可复用函数 |
+| 调一下就行 | `api/` 下七个路由没有任何归一端点，`service-client.ts` 的九个方法也没有对应项 |
+
+那行内联表达式是：
+
+```python
+key = paper.doi or paper.arxiv_id or paper.openalex_id or paper.paper_id
+```
+
+它还有一个隐含前提：**调用方必须已经持有完整的 `Paper`**，
+因为它读的是 `doi` / `arxiv_id` / `openalex_id` 三个交叉 id 字段。
+而 agent 往池子里加的时候手上只有一个 id 字符串。
+
+**决定**：把这个表达式提成 Service 侧的公开函数，并让它的结果**作为字段出现在响应里**。
+
+1. `schemas/paper.py` 新增 `canonical_key(paper: Paper) -> str`，就是上面那行；
+   `aggregator._deduplicate` 改为调用它——**归一逻辑从此只有一处定义**。
+2. `Paper` 增加 `canonical_id` 字段，由 `canonical_key` 计算。
+3. extension 的 `update_answer_pool` 在 `add` 时调一次 **现成的** `get_paper`
+   （`service-client.ts:790` 已有，`GET /paper/{paper_id}` 本来就是
+   "ID 空间的读侧"，`api/paper.py` 的 docstring 写明了这一点），
+   读回 `canonical_id` 落盘。
+
+**代价：每次 `add` 多一次 API 调用。这是明确接受的。** 换来的是三件事——
+extension 里不出现任何领域算法（守住 §2.2 第 2 条与 `AGENTS.md` §3.2）、
+**不需要新增端点**、以及池中每条自动带上标题/年份/作者等 §2.4 要求的字段
+（本来也要取，等于顺路）。
+
+被否决的替代：在 extension 里复制那行 key 表达式。省一次调用，
+但把领域算法复制成两份，且两份会各自漂移——这正是 §2.2 第 2 条要防的事。
+
+**这条同时修掉一个既有隐患**：`_deduplicate` 里的归一规则目前没有任何
+直接测试，只能通过聚合结果间接观察。提成函数之后它可以单测，
+而 F-10（`expand_citations` 拒绝 DOI-URL 形态的 id）暴露的正是同一个
+"ID 空间不自洽"的问题域。
 
 ### 2.4 schema 一次写够
 
@@ -346,6 +410,16 @@ S10 之后的运行直接比较**。
 **被否决的替代方案**：从 agent 的最终散文里解析论文列表。
 否决理由见 §1.2——这是个会静默劣化的仪器，而且它把测量的正确性
 押在了 agent 的输出格式上。
+
+### D-13（待落地）— 身份归一提成 Service 公开函数，`add` 接受一次额外调用
+
+全文见 §2.3b。一句话：`merge_papers` 不是身份归一算法，
+真正的规则是 `aggregator.py:111` 的一行内联表达式；把它提成
+`canonical_key()` 并作为 `canonical_id` 字段随 `get_paper` 返回，
+extension 每次 `add` 多调一次 API 换取"领域算法只有一处定义"。
+
+**代价**：每次 `add` 一次网络往返，计入 `call_ledger`。
+**被否决的替代**：在 extension 里复制 key 表达式。
 
 ### D-09（已发生）— LLM provider 层是计划外的提前投入
 
