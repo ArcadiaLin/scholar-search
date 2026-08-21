@@ -207,6 +207,101 @@ export interface ServiceClient {
 		input: { provider: string; endpoint?: string; params: Readonly<Record<string, unknown>> },
 		options?: { signal?: AbortSignal },
 	): Promise<ProviderQueryResult>;
+	expandCitations(input: ExpandInput, options?: { signal?: AbortSignal }): Promise<ExpandResult>;
+	facetProbe(input: FacetInput, options?: { signal?: AbortSignal }): Promise<FacetResult>;
+	rankCandidates(input: RankInput, options?: { signal?: AbortSignal }): Promise<RankResult>;
+	searchFulltext(input: FulltextInput, options?: { signal?: AbortSignal }): Promise<FulltextResult>;
+	getBudget(options?: { signal?: AbortSignal }): Promise<BudgetResult>;
+}
+
+export interface ExpandInput {
+	readonly seedIds: readonly string[];
+	readonly direction?: "backward" | "forward";
+	readonly depth?: number;
+	readonly fanout?: number;
+}
+
+export interface CitationEdgeRecord {
+	readonly sourceId: string;
+	readonly targetId: string;
+	readonly edgeType: string;
+}
+
+/**
+ * A bounded walk's result.
+ *
+ * `effectiveLimits` and `clamped` are not diagnostics: an expansion that used a
+ * smaller depth than asked, without saying so, makes a bounded result look like
+ * an exhausted graph.
+ */
+export interface ExpandResult {
+	readonly papers: readonly PaperSummary[];
+	readonly edges: readonly CitationEdgeRecord[];
+	readonly direction: string;
+	readonly effectiveLimits: Readonly<Record<string, number>>;
+	readonly clamped: readonly string[];
+	readonly providerCalls: number;
+	readonly failures: readonly FailureRecord[];
+}
+
+export interface FacetInput {
+	readonly query: string;
+	readonly groupBy: readonly string[];
+}
+
+export interface FacetResult {
+	readonly query: string;
+	readonly source: string;
+	readonly groups: Readonly<Record<string, readonly Readonly<Record<string, unknown>>[]>>;
+	readonly failures: readonly FailureRecord[];
+}
+
+export interface RankInput {
+	readonly query: string;
+	/** Full records, as the service returned them. Rank needs more than a summary. */
+	readonly candidates: readonly Readonly<Record<string, unknown>>[];
+	readonly topK?: number;
+}
+
+export interface RankResult {
+	readonly papers: readonly PaperSummary[];
+	readonly scored: number;
+	readonly skipped: number;
+	/** Always zero. Rank-only issues no provider call, and the service states it. */
+	readonly providerCalls: number;
+}
+
+export interface FulltextInput {
+	readonly paperIds: readonly string[];
+	readonly query?: string;
+	readonly sections?: readonly string[];
+}
+
+export interface FulltextSectionRecord {
+	readonly title: string;
+	readonly text: string;
+	readonly matchCount: number;
+}
+
+export interface FulltextPaperRecord {
+	readonly paperId: string;
+	readonly available: boolean;
+	readonly reason: string | null;
+	readonly sections: readonly FulltextSectionRecord[];
+}
+
+export interface FulltextResult {
+	readonly papers: readonly FulltextPaperRecord[];
+	readonly effectiveLimits: Readonly<Record<string, number>>;
+	readonly clamped: readonly string[];
+}
+
+export interface BudgetResult {
+	readonly limits: Readonly<Record<string, unknown>>;
+	readonly quotas: Readonly<Record<string, unknown>>;
+	readonly spent: Readonly<Record<string, number>>;
+	/** `process` until an episode-scoped Evidence Store exists. Reported, not assumed. */
+	readonly scope: string;
 }
 
 export interface ServiceClientOptions {
@@ -537,6 +632,72 @@ function parsePaperSummary(value: unknown, url: string, maxAuthors: number, maxA
 	};
 }
 
+/**
+ * Put a candidate back into the wire shape the service validates.
+ *
+ * What the agent has to hand is a `PaperSummary` - camelCase, because that is
+ * what every other tool result gave it - while `/rank` validates the service's
+ * snake_case `Paper`. Posting the summaries unchanged made the service skip
+ * every one of them, so ranking silently returned nothing. Translating here is
+ * the same boundary responsibility as translating responses the other way;
+ * a record that already speaks the wire shape passes through untouched.
+ */
+function toWirePaper(candidate: Readonly<Record<string, unknown>>): Record<string, unknown> {
+	if ("paper_id" in candidate) return { ...candidate };
+
+	const mapped: Record<string, unknown> = {};
+	const rename: Record<string, string> = {
+		paperId: "paper_id",
+		// The tool text labels the identifier `id:`, so that is the word the agent
+		// reaches for when it rebuilds a candidate from what it read. Accepting only
+		// `paperId` here made ranking skip every hand-assembled record - which is to
+		// say, in practice, all of them.
+		id: "paper_id",
+		arxivId: "arxiv_id",
+		openalexId: "openalex_id",
+		citationCount: "citation_count",
+		authorCount: "author_count",
+	};
+	for (const [key, value] of Object.entries(candidate)) {
+		if (key === "authors" && Array.isArray(value)) {
+			// The summary carries display names; the service wants author objects.
+			mapped.authors = value.map((name) => (typeof name === "string" ? { name } : name));
+			continue;
+		}
+		if (key === "url") {
+			mapped.urls = typeof value === "string" ? { paper: value } : {};
+			continue;
+		}
+		// Fields the summary derived and the service does not model are dropped
+		// rather than sent: an unknown key would fail validation for the whole record.
+		if (key === "authorCount" || key === "rank" || key === "tier") continue;
+		mapped[rename[key] ?? key] = value;
+	}
+	// The service requires a `paper_id`. A record that named only a DOI or an
+	// arXiv id is still identifiable, and rejecting it would lose a real candidate
+	// over a missing alias.
+	if (typeof mapped.paper_id !== "string" || mapped.paper_id === "") {
+		const fallback = [mapped.doi, mapped.arxiv_id, mapped.openalex_id].find(
+			(value): value is string => typeof value === "string" && value !== "",
+		);
+		if (fallback !== undefined) mapped.paper_id = fallback;
+	}
+	return mapped;
+}
+
+function numberMap(value: unknown): Record<string, number> {
+	if (!isRecord(value)) return {};
+	const result: Record<string, number> = {};
+	for (const [key, item] of Object.entries(value)) {
+		if (typeof item === "number" && Number.isFinite(item)) result[key] = item;
+	}
+	return result;
+}
+
+function stringList(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 function parseFailures(value: unknown): FailureRecord[] {
 	if (!Array.isArray(value)) return [];
 	const failures: FailureRecord[] = [];
@@ -658,6 +819,146 @@ export function createServiceClient(options: ServiceClientOptions): ServiceClien
 			// No shape assertion: passthrough exists so the provider's own response
 			// reaches the caller unrewritten, and every provider's differs.
 			return { provider: input.provider, raw: payload };
+		},
+
+		async expandCitations(input, callOptions) {
+			const url = `${baseUrl}/expand/citations`;
+			const body: Record<string, unknown> = { seed_ids: [...input.seedIds] };
+			if (input.direction !== undefined) body.direction = input.direction;
+			if (input.depth !== undefined) body.depth = input.depth;
+			if (input.fanout !== undefined) body.fanout = input.fanout;
+
+			const payload = await requestJson(url, {
+				fetch: fetchImpl,
+				timeoutMs,
+				retries,
+				signal: callOptions?.signal,
+				method: "POST",
+				body,
+			});
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			if (!Array.isArray(payload.papers)) throw parseError(url, 'the response has no "papers" array');
+			const edges: CitationEdgeRecord[] = [];
+			if (Array.isArray(payload.edges)) {
+				for (const entry of payload.edges) {
+					if (!isRecord(entry)) continue;
+					edges.push({
+						sourceId: typeof entry.source_id === "string" ? entry.source_id : "",
+						targetId: typeof entry.target_id === "string" ? entry.target_id : "",
+						edgeType: typeof entry.edge_type === "string" ? entry.edge_type : "unknown",
+					});
+				}
+			}
+			return {
+				papers: payload.papers.map((paper) => parsePaperSummary(paper, url, maxAuthors, maxAbstract)),
+				edges,
+				direction: typeof payload.direction === "string" ? payload.direction : "backward",
+				effectiveLimits: numberMap(payload.effective_limits),
+				clamped: stringList(payload.clamped),
+				providerCalls: numberOr(payload.provider_calls, 0),
+				failures: parseFailures(payload.failures),
+			};
+		},
+
+		async facetProbe(input, callOptions) {
+			const url = `${baseUrl}/facet`;
+			const payload = await requestJson(url, {
+				fetch: fetchImpl,
+				timeoutMs,
+				retries,
+				signal: callOptions?.signal,
+				method: "POST",
+				body: { query: input.query, group_by: [...input.groupBy] },
+			});
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			const groups: Record<string, Readonly<Record<string, unknown>>[]> = {};
+			if (isRecord(payload.groups)) {
+				for (const [field, entries] of Object.entries(payload.groups)) {
+					if (!Array.isArray(entries)) continue;
+					groups[field] = entries.filter((entry): entry is Record<string, unknown> => isRecord(entry));
+				}
+			}
+			return {
+				query: typeof payload.query === "string" ? payload.query : input.query,
+				source: typeof payload.source === "string" ? payload.source : "unknown",
+				groups,
+				failures: parseFailures(payload.failures),
+			};
+		},
+
+		async rankCandidates(input, callOptions) {
+			const url = `${baseUrl}/rank`;
+			const body: Record<string, unknown> = { query: input.query, candidates: input.candidates.map(toWirePaper) };
+			if (input.topK !== undefined) body.top_k = input.topK;
+			const payload = await requestJson(url, {
+				fetch: fetchImpl,
+				timeoutMs,
+				retries,
+				signal: callOptions?.signal,
+				method: "POST",
+				body,
+			});
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			if (!Array.isArray(payload.papers)) throw parseError(url, 'the response has no "papers" array');
+			return {
+				papers: payload.papers.map((paper) => parsePaperSummary(paper, url, maxAuthors, maxAbstract)),
+				scored: numberOr(payload.scored, 0),
+				skipped: numberOr(payload.skipped, 0),
+				providerCalls: numberOr(payload.provider_calls, 0),
+			};
+		},
+
+		async searchFulltext(input, callOptions) {
+			const url = `${baseUrl}/fulltext`;
+			const body: Record<string, unknown> = { paper_ids: [...input.paperIds] };
+			if (input.query !== undefined) body.query = input.query;
+			if (input.sections !== undefined && input.sections.length > 0) body.sections = [...input.sections];
+			const payload = await requestJson(url, {
+				fetch: fetchImpl,
+				timeoutMs,
+				retries,
+				signal: callOptions?.signal,
+				method: "POST",
+				body,
+			});
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			if (!Array.isArray(payload.papers)) throw parseError(url, 'the response has no "papers" array');
+			const papers: FulltextPaperRecord[] = [];
+			for (const entry of payload.papers) {
+				if (!isRecord(entry)) continue;
+				const sections: FulltextSectionRecord[] = [];
+				if (Array.isArray(entry.sections)) {
+					for (const section of entry.sections) {
+						if (!isRecord(section)) continue;
+						sections.push({
+							title: typeof section.title === "string" ? section.title : "",
+							text: typeof section.text === "string" ? section.text : "",
+							matchCount: numberOr(section.match_count, 0),
+						});
+					}
+				}
+				papers.push({
+					paperId: typeof entry.paper_id === "string" ? entry.paper_id : "",
+					available: entry.available === true,
+					reason: typeof entry.reason === "string" ? entry.reason : null,
+					sections,
+				});
+			}
+			return { papers, effectiveLimits: numberMap(payload.effective_limits), clamped: stringList(payload.clamped) };
+		},
+
+		async getBudget(callOptions) {
+			const url = `${baseUrl}/budget`;
+			const payload = await requestJson(url, { fetch: fetchImpl, timeoutMs, retries, signal: callOptions?.signal });
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			return {
+				limits: isRecord(payload.limits) ? payload.limits : {},
+				quotas: isRecord(payload.quotas) ? payload.quotas : {},
+				spent: numberMap(payload.spent),
+				// Reported rather than assumed: the service says whether this is an
+				// episode's spend or the process's, and today it is the process's.
+				scope: typeof payload.scope === "string" ? payload.scope : "unknown",
+			};
 		},
 	};
 }

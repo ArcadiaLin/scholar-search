@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -67,3 +67,51 @@ class PassthroughRequest(BaseModel):
 
     endpoint: str | None = Field(default=None, description="OpenAlex entity endpoint path.")
     params: dict[str, Any] = Field(default_factory=dict, description="Provider-native query parameters.")
+
+
+class ExpandRequest(BaseModel):
+    """Request schema for citation-graph expansion.
+
+    ``depth`` and ``fanout`` are requests, not settings: the service clamps them
+    to ``limits.expand`` and reports what it actually used. See
+    ``api/expand.py``.
+    """
+
+    seed_ids: list[str] = Field(min_length=1, description="Paper IDs to expand from.")
+    direction: Literal["backward", "forward"] = Field(
+        default="backward",
+        description="`backward` follows references (works this cites); `forward` follows citations (works citing this).",
+    )
+    depth: int | None = Field(default=None, ge=1, description="Hops to walk. Clamped to the configured ceiling.")
+    fanout: int | None = Field(
+        default=None, ge=1, description="Maximum edges to follow per seed. Clamped to the configured ceiling.")
+
+
+class FacetRequest(BaseModel):
+    """Request schema for pre-recall distribution probing."""
+
+    query: str = Field(min_length=1, description="Query whose result distribution is to be probed.")
+    group_by: list[str] = Field(
+        min_length=1, description="Provider field names to group by; see the field map from GET /providers.")
+
+
+class RankRequest(BaseModel):
+    """Request schema for rank-only scoring.
+
+    Rank-only means exactly that: it scores and orders the candidates it is
+    given and never issues a provider call, so it cannot introduce recall.
+    """
+
+    query: str = Field(min_length=1, description="Query the candidates are ranked against.")
+    candidates: list[dict[str, Any]] = Field(min_length=1, description="Candidate records to rank.")
+    top_k: int | None = Field(default=None, ge=1, le=200, description="How many ranked results to return.")
+
+
+class FulltextRequest(BaseModel):
+    """Request schema for full-text section retrieval."""
+
+    paper_ids: list[str] = Field(min_length=1, description="Papers whose full text should be fetched.")
+    query: str | None = Field(
+        default=None, description="When given, only sections matching it are returned, ranked by match count.")
+    sections: list[str] | None = Field(
+        default=None, description="Section-title filters. Omit for all sections, bounded by configuration.")

@@ -8,6 +8,26 @@ service:
   default_top_k: 20
   default_timeout_ms: 15000
 
+# Operational bounds (theta^S_k). The agent does not set these; it is bounded by
+# them. design.md §4 requires expansion depth, fan-out, concurrency and total
+# candidate count to be bounded by configuration rather than by constants in the
+# pipeline, so that an experiment can narrow them without a code change.
+limits:
+  expand:
+    max_depth: 2
+    max_seeds: 10
+    max_fanout_per_seed: 25
+    max_total_candidates: 200
+    max_concurrency: 4
+  facet:
+    max_group_by: 3
+  rank:
+    max_candidates: 500
+  fulltext:
+    max_papers: 5
+    max_sections: 20
+    max_section_chars: 2000
+
 plugins:
   openalex:
     enabled: true

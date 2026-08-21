@@ -15,7 +15,7 @@
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
-| S7 | 其余检索工具 | TODO | | |
+| S7 | 其余检索工具 | DONE | `PENDING_S7` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
 | S8 | Reviewer 通道 | TODO | | |
 | S9 | RPC 评测入口 | TODO | | |
 
@@ -627,6 +627,91 @@ shim 不提交——它是实验器材，不是产物，与 D-01 里 RPC 冒烟�
    （见上，需要用户明确授权改 vendored 的 Pi fork）。这条记在下方 U-03。
 
 - commit: `4b46427`
+### 2026-08-21 — S7
+
+$T^M$ 补齐到九个工具。**照 S2 的形状做**，但 Service 侧五个端点原来都不存在，
+所以这个 stage 大头在 Python 侧。
+
+- Service 侧新增：
+  - `POST /expand/citations`（`api/expand.py`）：按 `graph_references` /
+    `graph_citations` 能力路由的有界图遍历。
+  - `POST /facet`、`POST /rank`、`GET /budget`（`api/probe.py`）。
+  - `POST /fulltext`（`api/fulltext.py`）：arXiv 经 ar5iv 取正文分节。
+  - `call_ledger.py`：调用计数，供 `/budget` 报真实数字而不是估计。
+  - `config.yaml` 新增 `limits:` 段 + `config.get_limits()`。
+
+- **有界性是按 `design.md` §4 的要求做的，而且边界来自配置不是请求**：
+  `limits.expand` 给 `max_depth` / `max_seeds` / `max_fanout_per_seed` /
+  `max_total_candidates` / `max_concurrency`。请求可以要**更少**并被照办，
+  要更多则被夹到上限，**且响应里 `clamped` 列出被夹了哪些**。
+  理由：一个调用方自己传的边界不是边界；而一个悄悄用了更小深度的遍历，
+  会让"被配置截断的结果"看起来像"文献本来就少"。
+  并发用 `asyncio.Semaphore` 而不是分批，这样一个慢 provider 不会串行化整个遍历，
+  同时并发数永不超过配置值——有一条测试实测并发峰值 ≤ 4。
+
+- **三个工具刻意不能增加候选**，因为"看了一眼"/"重排了"/"又搜了一次"
+  必须在轨迹里可区分：
+  - `facet_probe` 只看分布；
+  - `rank_candidates` 是 rank-only，`provider_calls` 恒为 0
+    （有一条测试把所有 provider 入口都打成抛异常，排序仍须成功）；
+  - `search_fulltext` 只取**你点名的**论文的分节，`query` 是在这些论文的分节里筛选与排序，
+    不会引入新论文（有测试断言只发了一次 ar5iv 请求）。
+
+- **`search_fulltext` 的范围说清楚了**：这是**按标识符取正文**，不是全文检索索引。
+  本服务背后没有全文索引，把它说成全文检索会让人以为它是一条召回路径。
+  召回仍然只在 `/search`。这一点写在端点文档、工具描述和 profile 正文里。
+
+- `get_budget` 的 `scope` 字段如实标 `process` 而不是 episode：
+  按 episode 记账需要 episode 作用域的 Evidence Store，而它还不存在
+  （`docs/07-widi-mapping.md` §3.2）。把进程累计报成 episode 消耗，
+  会让一个长跑的服务看起来像一次极贵的检索。工具描述里也提醒了这一点。
+
+- 途中修的一个真实缺陷（**是我自己引入的接口不一致**，实测发现）：
+  `rank_candidates` 第一次真实调用时 **20 条候选全被跳过、scored=0**。
+  原因是模型手里拿到的是我给的 `PaperSummary`（camelCase），
+  而 `/rank` 校验的是 Service 的 `Paper`（snake_case）。
+  更关键的是第二次实测发现：模型其实是**照工具输出的文本重建候选**的，
+  而我的 `formatPaper` 把标识符渲染成 `id:`，所以它传的键是 `id`——
+  既不是 `paperId` 也不是 `paper_id`。
+  修法是在 client 边界做翻译（`toWirePaper`）：`id` / `paperId` 都映到 `paper_id`，
+  作者名字数组还原成作者对象，`url` 还原成 `urls`，Service 不建模的派生字段丢掉，
+  没有标识符时退回 DOI / arXiv id。
+  **教训记下来**：工具输出的文本就是在教模型用什么词汇，
+  边界必须接受自己教出去的那套词汇。
+  修后同一条真实调用 `Ranked 20 candidate(s)`、skipped 0。
+
+- 验收（实际命令与输出）：
+  1. `tsgo --noEmit -p .../scholar-search/tsconfig.json` → 退出 0。
+  2. `biome check --error-on-warnings` 对 8 个非 fixture 文件 → `No fixes applied.`
+  3. `npm run test:widis` → `# tests 124 / # pass 124 / # fail 0`（S6 是 102，本 stage +22）。
+  4. Python：`uv run pytest -q` → `111 passed`（S6 时 76，本 stage +35）；
+     `ruff check .` → `All checks passed!`；
+     `ruff format --check .` → 17 files，与基线持平（见 E-06）。
+  5. 十个端点全部在线：
+     `/search` `/search/metadata` `/providers` `/provider/{name}/query`
+     `/paper/{paper_id}` `/expand/citations` `/facet` `/rank` `/budget` `/fulltext`
+  6. 真实链路：一次会话里模型按要求依次调用了六个工具，
+     `run_summary`: `tools: {calls:6, failed:0, byName:{get_budget:1, facet_probe:1,
+     search_metadata:1, expand_citations:1, rank_candidates:1, search_fulltext:1}}`，
+     `providerErrors: 0`。
+     其中故意要它对 `expand_citations` 传 `depth: 5`，模型看到的输出里确实有：
+     ```
+     bounds in force: {"depth":2,"fanout":25,"max_seeds":10,
+                       "max_total_candidates":200,"max_concurrency":4}
+     REDUCED TO THE CONFIGURED CEILING: depth. This walk was cut short by
+     configuration, so a thin result here does not mean a thin literature.
+     ```
+     夹取生效且对模型可见，这是 §4 有界性要求的实证。
+
+- 一个运行期观察（不是缺陷）：用 arXiv id 作种子做 `expand_citations` 时，
+  OpenAlex 返回 4xx——它的图接口认自己的 work id，不认裸 arXiv id。
+  轨迹把它记成一条分类失败（`[http] seed '2206.01729': OpenAlex client error`），
+  模型据此知道该先 `get_paper` 拿到 openalex id 再扩展。
+  这正是失败分类要做的事，但也说明 `expand_citations` 的工具描述
+  将来可以更明确地说"用 list_providers 里那个源的 id 空间"。
+
+- commit: `PENDING_S7`
+
 
 
 

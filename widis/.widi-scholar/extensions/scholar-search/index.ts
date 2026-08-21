@@ -4,10 +4,20 @@
  *
  * Registered so far:
  *
- *   list_providers   runtime capability table + quota, from the Search Service
- *   search_metadata  the main retrieval call: ranked candidates + process account
- *   get_paper        one record by stable id
- *   provider_query   passthrough for a provider's own query syntax
+ *   list_providers    runtime capability table + quota, from the Search Service
+ *   search_metadata   the main retrieval call: ranked candidates + process account
+ *   get_paper         one record by stable id
+ *   provider_query    passthrough for a provider's own query syntax
+ *   expand_citations  bounded citation-graph walk
+ *   facet_probe       result distribution, before paying for recall
+ *   rank_candidates   rank-only; issues no provider call
+ *   search_fulltext   body sections of named papers; adds no papers
+ *   get_budget        the bounds in force, and what has been spent
+ *
+ * That is the nine of $T^M$. Three of them are deliberately incapable of adding
+ * a candidate - `facet_probe`, `rank_candidates` and `search_fulltext` - because
+ * "the agent looked", "the agent re-ordered" and "the agent searched again" have
+ * to stay distinguishable in the trajectory.
  *
  * `list_providers` comes first because it is the precondition for every other
  * tool that lets the agent write a provider-native query: the agent cannot pick
@@ -60,6 +70,8 @@ const MAX_OUTPUT_CHARS = 6_000;
 const MAX_LISTED_PAPERS = 20;
 const MAX_ABSTRACT_CHARS_IN_LIST = 280;
 const MAX_PASSTHROUGH_CHARS = 4_000;
+const MAX_FACET_BUCKETS = 15;
+const MAX_FULLTEXT_CHARS_PER_SECTION = 700;
 
 function readParams<T>(params: unknown): T {
 	return params as T;
@@ -590,6 +602,339 @@ const extension: ExtensionDefinition = {
 						raw: result.raw,
 					},
 				};
+			},
+		});
+
+		api.registerTool({
+			name: "expand_citations",
+			label: "Expand Citations",
+			description:
+				"Walk the citation graph out from papers you already have. `backward` follows what a seed cites; " +
+				"`forward` follows what cites it. Returns the papers reached and the edges traversed. " +
+				"Depth and fan-out are bounded by the service's configuration: you may ask for less than the ceiling " +
+				"and get it, and if you ask for more the answer says which bounds were reduced. Read that field - a " +
+				"clamped walk is not an exhausted graph. Not every source can do this; check list_providers.",
+			parameters: {
+				type: "object",
+				properties: {
+					seed_ids: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1,
+						description: "Identifiers to expand from, as returned by search_metadata or get_paper.",
+					},
+					direction: {
+						type: "string",
+						enum: ["backward", "forward"],
+						description: "`backward` = works the seeds cite; `forward` = works citing the seeds. Default backward.",
+					},
+					depth: { type: "integer", minimum: 1, description: "Hops to walk. Clamped to the configured ceiling." },
+					fanout: {
+						type: "integer",
+						minimum: 1,
+						description: "Maximum edges to follow per seed. Clamped to the configured ceiling.",
+					},
+				},
+				required: ["seed_ids"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const input = readParams<{
+					seed_ids: string[];
+					direction?: "backward" | "forward";
+					depth?: number;
+					fanout?: number;
+				}>(params);
+				if (!Array.isArray(input.seed_ids) || input.seed_ids.length === 0) {
+					throw new Error("expand_citations requires at least one seed_id.");
+				}
+
+				const client = clientFromEnv();
+				let result: Awaited<ReturnType<ServiceClient["expandCitations"]>>;
+				try {
+					result = await client.expandCitations(
+						{ seedIds: input.seed_ids, direction: input.direction, depth: input.depth, fanout: input.fanout },
+						{ signal: context.signal ?? undefined },
+					);
+				} catch (error) {
+					if (error instanceof ServiceRequestError) throw new Error(describeFailure(error));
+					throw error;
+				}
+
+				const lines = [
+					`${result.direction} expansion from ${input.seed_ids.length} seed(s): ` +
+						`${result.papers.length} paper(s) reached over ${result.edges.length} edge(s), ` +
+						`${result.providerCalls} provider call(s).`,
+					`bounds in force: ${JSON.stringify(result.effectiveLimits)}`,
+				];
+				// A clamp the agent cannot see is a clamp it will reason past.
+				if (result.clamped.length > 0) {
+					lines.push(
+						`REDUCED TO THE CONFIGURED CEILING: ${result.clamped.join(", ")}. ` +
+							"This walk was cut short by configuration, so a thin result here does not mean a thin literature.",
+					);
+				}
+				if (result.failures.length > 0) {
+					lines.push(
+						`failures (${result.failures.length}):`,
+						...result.failures.map(
+							(failure) => `  - ${failure.source ?? "service"} [${failure.errorType}] ${failure.message}`,
+						),
+					);
+				}
+				if (result.papers.length === 0) {
+					lines.push(
+						"No papers reached. Either the seeds have no edges in this direction, or no source could serve them.",
+					);
+				} else {
+					const shown = result.papers.slice(0, MAX_LISTED_PAPERS);
+					lines.push("", shown.map(formatPaper).join("\n"));
+					const elided = result.papers.length - shown.length;
+					if (elided > 0) lines.push(`[${elided} further paper(s) in this call's structured details.]`);
+				}
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		api.registerTool({
+			name: "facet_probe",
+			label: "Facet Probe",
+			description:
+				"Ask how a query's results are distributed before paying to recall them - by year, by venue, by topic, " +
+				"or whatever grouping fields the sources expose. Use it to find out whether a query is too broad, " +
+				"too narrow, or landing in an unexpected field, without pulling the candidates first. " +
+				"The available grouping fields come from list_providers, not from memory.",
+			parameters: {
+				type: "object",
+				properties: {
+					query: { type: "string", description: "Query whose result distribution you want to see." },
+					group_by: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1,
+						description:
+							"Provider field names to group by. Bounded by configuration; see list_providers for the names.",
+					},
+				},
+				required: ["query", "group_by"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const input = readParams<{ query: string; group_by: string[] }>(params);
+				if (typeof input.query !== "string" || input.query.trim() === "") {
+					throw new Error("facet_probe requires a non-empty query.");
+				}
+				if (!Array.isArray(input.group_by) || input.group_by.length === 0) {
+					throw new Error("facet_probe requires at least one group_by field; call list_providers for the field names.");
+				}
+
+				const client = clientFromEnv();
+				let result: Awaited<ReturnType<ServiceClient["facetProbe"]>>;
+				try {
+					result = await client.facetProbe(
+						{ query: input.query, groupBy: input.group_by },
+						{ signal: context.signal ?? undefined },
+					);
+				} catch (error) {
+					if (error instanceof ServiceRequestError) throw new Error(describeFailure(error));
+					throw error;
+				}
+
+				const lines = [`Distribution for "${result.query}" (from ${result.source}):`];
+				for (const [field, entries] of Object.entries(result.groups)) {
+					const shown = entries.slice(0, MAX_FACET_BUCKETS);
+					const rendered = shown.map((entry) => {
+						const key = entry.key_display_name ?? entry.key ?? "(unknown)";
+						return `    ${String(key)}: ${String(entry.count ?? "?")}`;
+					});
+					lines.push(`  ${field} (${entries.length} bucket(s)):`, ...rendered);
+					if (entries.length > shown.length) lines.push(`    ... ${entries.length - shown.length} more bucket(s)`);
+				}
+				if (Object.keys(result.groups).length === 0) lines.push("  (the provider returned no groups for these fields)");
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		api.registerTool({
+			name: "rank_candidates",
+			label: "Rank Candidates",
+			description:
+				"Re-rank candidates you already have against a query. This is rank-only: it scores and orders what you " +
+				"give it and issues no search, so it can never add a paper you had not already found. " +
+				"Pass the candidate records from a previous call's results. Use it to re-order after you have gathered " +
+				"from several directions; use search_metadata when you need new candidates.",
+			parameters: {
+				type: "object",
+				properties: {
+					query: { type: "string", description: "Query the candidates are ranked against." },
+					candidates: {
+						type: "array",
+						items: { type: "object", additionalProperties: true },
+						minItems: 1,
+						description: "Candidate records to rank, as returned by a previous retrieval call.",
+					},
+					top_k: { type: "integer", minimum: 1, maximum: 200, description: "How many ranked results to return." },
+				},
+				required: ["query", "candidates"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const input = readParams<{ query: string; candidates: Record<string, unknown>[]; top_k?: number }>(params);
+				if (typeof input.query !== "string" || input.query.trim() === "") {
+					throw new Error("rank_candidates requires a non-empty query.");
+				}
+				if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
+					throw new Error("rank_candidates requires at least one candidate record.");
+				}
+
+				const client = clientFromEnv();
+				let result: Awaited<ReturnType<ServiceClient["rankCandidates"]>>;
+				try {
+					result = await client.rankCandidates(
+						{ query: input.query, candidates: input.candidates, topK: input.top_k },
+						{ signal: context.signal ?? undefined },
+					);
+				} catch (error) {
+					if (error instanceof ServiceRequestError) throw new Error(describeFailure(error));
+					throw error;
+				}
+
+				const lines = [
+					`Ranked ${result.scored} candidate(s) against "${input.query}". ` +
+						`${result.providerCalls} provider call(s) - ranking adds no recall.`,
+				];
+				if (result.skipped > 0) {
+					lines.push(`${result.skipped} record(s) could not be parsed as papers and were not ranked.`);
+				}
+				const shown = result.papers.slice(0, MAX_LISTED_PAPERS);
+				lines.push("", shown.map(formatPaper).join("\n"));
+				const elided = result.papers.length - shown.length;
+				if (elided > 0) lines.push(`[${elided} further result(s) in this call's structured details.]`);
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		api.registerTool({
+			name: "search_fulltext",
+			label: "Search Fulltext",
+			description:
+				"Fetch the body sections of papers you name, so a claim can be checked against the text rather than the " +
+				"abstract. `query` filters and ranks those papers' sections by how well they match; it does NOT find " +
+				"new papers - this tool never adds a paper you did not name. Use search_metadata for recall. " +
+				"Full text is not available for every paper, and a paper without it comes back saying so, which is a " +
+				"fact about coverage rather than an error.",
+			parameters: {
+				type: "object",
+				properties: {
+					paper_ids: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1,
+						description: "Papers whose full text to fetch. Bounded by configuration.",
+					},
+					query: {
+						type: "string",
+						description: "Return only sections matching this, most-matching first. Omit for all sections.",
+					},
+					sections: {
+						type: "array",
+						items: { type: "string" },
+						description: "Section-heading filters, e.g. ['related work','method']. Omit for all sections.",
+					},
+				},
+				required: ["paper_ids"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const input = readParams<{ paper_ids: string[]; query?: string; sections?: string[] }>(params);
+				if (!Array.isArray(input.paper_ids) || input.paper_ids.length === 0) {
+					throw new Error("search_fulltext requires at least one paper_id.");
+				}
+
+				const client = clientFromEnv();
+				let result: Awaited<ReturnType<ServiceClient["searchFulltext"]>>;
+				try {
+					result = await client.searchFulltext(
+						{ paperIds: input.paper_ids, query: input.query, sections: input.sections },
+						{ signal: context.signal ?? undefined },
+					);
+				} catch (error) {
+					if (error instanceof ServiceRequestError) throw new Error(describeFailure(error));
+					throw error;
+				}
+
+				const available = result.papers.filter((paper) => paper.available && paper.sections.length > 0);
+				const lines = [`Full text for ${result.papers.length} paper(s): ${available.length} with usable sections.`];
+				if (result.clamped.length > 0) {
+					lines.push(`REDUCED TO THE CONFIGURED CEILING: ${result.clamped.join(", ")}.`);
+				}
+				for (const paper of result.papers) {
+					if (!paper.available || paper.sections.length === 0) {
+						lines.push(`- ${paper.paperId}: unavailable - ${paper.reason ?? "no reason given"}`);
+						continue;
+					}
+					lines.push(`- ${paper.paperId}: ${paper.sections.length} section(s)`);
+					for (const section of paper.sections) {
+						const match = section.matchCount > 0 ? ` [${section.matchCount} match(es)]` : "";
+						lines.push(`  ## ${section.title}${match}`, `  ${truncate(section.text, MAX_FULLTEXT_CHARS_PER_SECTION)}`);
+					}
+				}
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		api.registerTool({
+			name: "get_budget",
+			label: "Get Budget",
+			description:
+				"Report the operational bounds you are subject to - expansion depth, fan-out, candidate ceilings, " +
+				"per-source quotas - and what has been spent against them. Call it when deciding how much of an " +
+				"expansion or how many searches to attempt. Note the `scope` field: spend is currently counted per " +
+				"service process, not per request, so it is a floor on what has been used rather than your own usage.",
+			parameters: { type: "object", properties: {}, additionalProperties: false },
+			async execute(_toolCallId, _params, context) {
+				context.signal?.throwIfAborted();
+				const client = clientFromEnv();
+				let result: Awaited<ReturnType<ServiceClient["getBudget"]>>;
+				try {
+					result = await client.getBudget({ signal: context.signal ?? undefined });
+				} catch (error) {
+					if (error instanceof ServiceRequestError) throw new Error(describeFailure(error));
+					throw error;
+				}
+
+				const spent = Object.entries(result.spent);
+				const lines = [
+					`Operational bounds in force (these are configuration; you cannot raise them):`,
+					`  ${JSON.stringify(result.limits)}`,
+					`Per-source quotas:`,
+					`  ${JSON.stringify(result.quotas)}`,
+					spent.length === 0
+						? "Spent so far: nothing recorded."
+						: `Spent so far (scope: ${result.scope}): ${spent.map(([key, value]) => `${key}=${value}`).join(", ")}`,
+				];
+				if (result.scope === "process") {
+					lines.push(
+						"`scope: process` means this counts every call the service has served since it started, " +
+							"not only yours. Treat it as a lower bound on usage, not as your own budget consumption.",
+					);
+				}
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
 			},
 		});
 	},

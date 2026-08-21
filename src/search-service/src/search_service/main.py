@@ -11,7 +11,15 @@ from fastapi.responses import JSONResponse
 
 from search_service import __version__
 from search_service.aggregator import Aggregator
-from search_service.api import paper_router, providers_router, search_router
+from search_service.api import (
+    expand_router,
+    fulltext_router,
+    paper_router,
+    probe_router,
+    providers_router,
+    search_router,
+)
+from search_service.call_ledger import CallLedger
 from search_service.config import ServiceConfig
 from search_service.models import HealthResponse
 from search_service.plugin_loader import PluginRegistry
@@ -29,6 +37,7 @@ async def lifespan(app: FastAPI):
     registry = PluginRegistry(config)
     registry.load()
     aggregator = Aggregator(registry)
+    ledger = CallLedger()
 
     _state["config"] = config
     _state["registry"] = registry
@@ -37,6 +46,7 @@ async def lifespan(app: FastAPI):
     app.state.config = config
     app.state.registry = registry
     app.state.aggregator = aggregator
+    app.state.ledger = ledger
 
     enabled = [p.name for p in registry.get_enabled_plugins()]
     logger.info("Search service started with enabled plugin(s): %s", enabled)
@@ -56,6 +66,9 @@ app = FastAPI(
 app.include_router(search_router)
 app.include_router(providers_router)
 app.include_router(paper_router)
+app.include_router(expand_router)
+app.include_router(probe_router)
+app.include_router(fulltext_router)
 
 
 @app.exception_handler(Exception)

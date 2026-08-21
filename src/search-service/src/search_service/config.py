@@ -72,6 +72,37 @@ class ServiceConfig:
         """Return cache-level config."""
         return dict(self._yaml.get("cache", {"ttl_seconds": 300}))
 
+    def get_limits(self) -> dict[str, Any]:
+        """Return the effective operational bounds, merged over the defaults.
+
+        These are $\\theta^S_k$: the service-side knobs the agent does not set.
+        They live here rather than as constants in the pipeline because
+        ``docs/design.md`` §4 requires expansion depth, fan-out, concurrency and
+        total candidate count to be bounded *by configuration* - a hard-coded
+        bound cannot be narrowed for an experiment, and a bound the agent passes
+        in is not a bound at all.
+        """
+        configured = self._yaml.get("limits", {})
+        limits: dict[str, Any] = {
+            "expand": {
+                "max_depth": 2,
+                "max_seeds": 10,
+                "max_fanout_per_seed": 25,
+                "max_total_candidates": 200,
+                "max_concurrency": 4,
+            },
+            "facet": {"max_group_by": 3},
+            "rank": {"max_candidates": 500},
+            "fulltext": {"max_papers": 5, "max_sections": 20, "max_section_chars": 2_000},
+        }
+        if isinstance(configured, dict):
+            for section, values in configured.items():
+                if section in limits and isinstance(values, dict):
+                    limits[section] = {**limits[section], **values}
+                elif isinstance(values, dict):
+                    limits[section] = dict(values)
+        return limits
+
     def get_plugin_config(self, name: str) -> dict[str, Any]:
         """Return config dict for a named plugin.
 
