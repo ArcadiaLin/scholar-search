@@ -163,3 +163,14 @@ class ServiceConfig:
         if not self.settings.plugin_dirs:
             return []
         return [Path(d.strip()) for d in self.settings.plugin_dirs.split(",") if d.strip()]
+
+    def get_llm_providers_config(self) -> dict[str, Any]:
+        """Return the raw ``llm_providers`` block from YAML."""
+        cfg = self._yaml.get("llm_providers", {})
+        return dict(cfg) if isinstance(cfg, dict) else {}
+
+    def get_default_llm_provider(self) -> str | None:
+        """Return the configured default LLM provider name, if any."""
+        cfg = self.get_llm_providers_config()
+        default = cfg.get("default")
+        return str(default) if default else None

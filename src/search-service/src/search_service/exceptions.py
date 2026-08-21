@@ -21,3 +21,11 @@ class SourceError(SearchServiceError):
         self.source = source
         self.error_type = error_type
         self.message = message
+
+
+class LLMError(SearchServiceError):
+    """Raised when an LLM provider encounters a runtime error."""
+
+
+class LLMConfigError(ConfigError):
+    """Raised when LLM provider configuration is invalid."""

@@ -12,6 +12,11 @@ from search_service.schemas.capabilities import (
     ProviderCapabilities,
     ReliabilityProfile,
 )
+from search_service.schemas.judge import (
+    JudgeRequest,
+    JudgeResponse,
+    LLMMessage,
+)
 from search_service.schemas.paper import (
     Author,
     CitationEdge,
@@ -69,6 +74,9 @@ __all__ = [
     "FulltextResponse",
     "FulltextSection",
     "IssuedQuery",
+    "JudgeRequest",
+    "JudgeResponse",
+    "LLMMessage",
     "Paper",
     "PaperResponse",
     "PassthroughRequest",
