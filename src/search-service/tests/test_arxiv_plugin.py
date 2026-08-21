@@ -92,3 +92,50 @@ def test_search_parse_error(plugin):
     with pytest.raises(SourceError) as exc_info:
         plugin.search_sync("query", top_k=5)
     assert exc_info.value.error_type == "parse"
+
+
+_EMPTY_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"></feed>
+"""
+
+
+@respx.mock
+async def test_lookup_uses_id_list_rather_than_a_keyword_search(plugin):
+    # arXiv's `id_list` is exact; `search_query` would return fuzzy matches, so a
+    # lookup that used it could answer with the wrong paper.
+    route = respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text=_ARXIV_ATOM))
+
+    record = await plugin.lookup("1706.03762")
+
+    assert route.called
+    assert route.calls.last.request.url.params["id_list"] == "1706.03762"
+    assert "search_query" not in route.calls.last.request.url.params
+    assert record is not None
+    assert record["paper_id"] == "1706.03762"
+    assert record["arxiv_id"] == "1706.03762"
+
+
+@respx.mock
+async def test_lookup_strips_a_version_suffix_and_an_arxiv_prefix(plugin):
+    route = respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text=_ARXIV_ATOM))
+
+    await plugin.lookup("arXiv:1706.03762v5")
+
+    assert route.calls.last.request.url.params["id_list"] == "1706.03762"
+
+
+@respx.mock
+async def test_lookup_returns_none_for_an_unknown_id(plugin):
+    # An empty feed is arXiv's "no such ID", and it must not become an exception:
+    # the caller distinguishes "not here" from "lookup broke".
+    respx.get("https://export.arxiv.org/api/query").mock(return_value=Response(200, text=_EMPTY_FEED))
+
+    assert await plugin.lookup("9999.99999") is None
+
+
+async def test_lookup_returns_none_for_a_blank_id(plugin):
+    # No request should be issued at all for an ID that cannot identify anything.
+    with respx.mock:
+        route = respx.get("https://export.arxiv.org/api/query")
+        assert await plugin.lookup("   ") is None
+        assert not route.called

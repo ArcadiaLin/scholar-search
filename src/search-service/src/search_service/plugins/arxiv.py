@@ -10,6 +10,8 @@ import asyncio
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -167,6 +169,8 @@ class ArxivClient:
         self._min_interval = 1.0 / self.rate_limit_rps
         self._last_request_at = 0.0
         self._lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
+        self._active_sessions = 0
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -244,6 +248,19 @@ class ArxivClient:
 
         raise SourceError("arxiv", "unknown", f"arXiv request failed after retries: {last_exception}")
 
+    async def lookup(self, paper_id: str) -> SearchResultItem | None:
+        """Fetch a single entry by arXiv ID.
+
+        ``id_list`` is arXiv's own ID lookup, which unlike ``search_query`` is
+        exact: a version suffix is accepted and an unknown ID comes back as an
+        empty feed rather than as fuzzy matches.
+        """
+        arxiv_id = _extract_arxiv_id(paper_id) or paper_id.strip()
+        if not arxiv_id:
+            return None
+        items = await self.native_query({"id_list": arxiv_id, "max_results": 1})
+        return items[0] if items else None
+
     async def native_query(self, raw_payload: dict[str, Any]) -> list[SearchResultItem]:
         """Execute a provider-native arXiv query and return parsed items.
 
@@ -290,6 +307,24 @@ class ArxivClient:
             await asyncio.sleep(wait)
 
         raise SourceError("arxiv", "unknown", f"arXiv request failed after retries: {last_exception}")
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[None]:
+        """Bracket one operation, closing the shared client when the last one leaves.
+
+        See ``OpenAlexClient.session``: closing unconditionally after every call
+        breaks concurrent queries against one provider, and never closing breaks
+        ``search_sync``, which drives each call from its own event loop.
+        """
+        async with self._session_lock:
+            self._active_sessions += 1
+        try:
+            yield
+        finally:
+            async with self._session_lock:
+                self._active_sessions -= 1
+                if self._active_sessions == 0:
+                    await self.close()
 
     async def close(self) -> None:
         if self._client is not None and not self._client.is_closed:
@@ -342,15 +377,13 @@ class ArxivPlugin(SearchProvider):
         end_date: str | None = None,
         native_params: dict[str, Any] | None = None,
     ) -> list[SearchResultItem]:
-        try:
+        async with self._client.session():
             return await self._client.search(
                 query,
                 top_k,
                 end_date=end_date,
                 native_params=native_params,
             )
-        finally:
-            await self._client.close()
 
     async def search_native(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a provider-native arXiv query and return a JSON-serializable dict.
@@ -358,11 +391,20 @@ class ArxivPlugin(SearchProvider):
         The arXiv Atom API returns XML; the result is parsed and exposed as a
         dict so the passthrough endpoint can return JSON.
         """
-        try:
+        async with self._client.session():
             items = await self._client.native_query(raw_payload)
             return {"results": [item.model_dump() for item in items]}
-        finally:
-            await self._client.close()
+
+    async def lookup(self, paper_id: str) -> dict[str, Any] | None:
+        """Look up one arXiv entry by ID.
+
+        The capability table has always advertised ``id_lookup`` for arXiv while
+        the base class raised ``NotImplementedError``, so anything routing on the
+        capability got a crash instead of a record.
+        """
+        async with self._client.session():
+            item = await self._client.lookup(paper_id)
+            return item.model_dump() if item else None
 
 
 Plugin = ArxivPlugin

@@ -1,0 +1,211 @@
+[
+  {
+    "name": "openalex",
+    "enabled": true,
+    "capabilities": {
+      "search_keyword": true,
+      "search_native_query": true,
+      "search_field_filter": true,
+      "facet_group_by": true,
+      "id_lookup": true,
+      "id_mapping": false,
+      "graph_references": true,
+      "graph_citations": true,
+      "recommend_related": true,
+      "metrics_raw_citations": true,
+      "metrics_normalized": true,
+      "text_abstract": true,
+      "text_fulltext": false
+    },
+    "cost_model": {
+      "works_search": {
+        "usd_per_call": 0.001,
+        "daily_quota": 1000,
+        "rate_limit_rps": 10.0,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      },
+      "filter_query": {
+        "usd_per_call": 0.0001,
+        "daily_quota": 10000,
+        "rate_limit_rps": 10.0,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      },
+      "group_by": {
+        "usd_per_call": 0.0001,
+        "daily_quota": 10000,
+        "rate_limit_rps": 10.0,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      },
+      "single_work": {
+        "usd_per_call": 0.0,
+        "daily_quota": null,
+        "rate_limit_rps": 10.0,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      }
+    },
+    "field_map": {
+      "id": "openalex_id",
+      "display_name": "title",
+      "title": "title",
+      "publication_year": "year",
+      "publication_date": "published",
+      "doi": "doi",
+      "abstract_inverted_index": "abstract",
+      "authorships": "authors",
+      "primary_location": "urls",
+      "concepts": "topics",
+      "topics": "topics",
+      "keywords": "keywords",
+      "referenced_works": "references",
+      "related_works": "related_works",
+      "cited_by_api_url": "citations",
+      "cited_by_count": "citation_count",
+      "fwci": "normalized_impact",
+      "citation_normalized_percentile": "citation_percentile",
+      "counts_by_year": "counts_by_year",
+      "is_retracted": "is_retracted",
+      "is_paratext": "is_paratext",
+      "biblio": "biblio",
+      "mesh": "mesh",
+      "open_access": "open_access"
+    },
+    "reliability": {
+      "p50_latency_ms": 500,
+      "p95_latency_ms": 1500,
+      "error_taxonomy": [
+        "timeout",
+        "rate_limit",
+        "auth",
+        "http",
+        "parse",
+        "unknown"
+      ],
+      "retry_policy": "exponential",
+      "max_retries": 3
+    },
+    "quota_remaining": {}
+  },
+  {
+    "name": "arxiv",
+    "enabled": true,
+    "capabilities": {
+      "search_keyword": true,
+      "search_native_query": true,
+      "search_field_filter": true,
+      "facet_group_by": false,
+      "id_lookup": true,
+      "id_mapping": false,
+      "graph_references": false,
+      "graph_citations": false,
+      "recommend_related": false,
+      "metrics_raw_citations": false,
+      "metrics_normalized": false,
+      "text_abstract": true,
+      "text_fulltext": true
+    },
+    "cost_model": {
+      "atom_search": {
+        "usd_per_call": 0.0,
+        "daily_quota": null,
+        "rate_limit_rps": 0.33,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      },
+      "single_paper": {
+        "usd_per_call": 0.0,
+        "daily_quota": null,
+        "rate_limit_rps": 0.33,
+        "burst_policy": {
+          "max_burst": 1,
+          "refill_rate": 1.0
+        }
+      }
+    },
+    "field_map": {
+      "id": "arxiv_id",
+      "title": "title",
+      "summary": "abstract",
+      "published": "published",
+      "updated": "updated",
+      "author": "authors",
+      "arxiv:comment": "comment",
+      "arxiv:affiliation": "affiliation",
+      "category": "category",
+      "link": "urls"
+    },
+    "reliability": {
+      "p50_latency_ms": 800,
+      "p95_latency_ms": 3000,
+      "error_taxonomy": [
+        "timeout",
+        "rate_limit",
+        "http",
+        "parse",
+        "unknown"
+      ],
+      "retry_policy": "exponential",
+      "max_retries": 2
+    },
+    "quota_remaining": {}
+  },
+  {
+    "name": "serper",
+    "enabled": false,
+    "capabilities": {
+      "search_keyword": true,
+      "search_native_query": false,
+      "search_field_filter": false,
+      "facet_group_by": false,
+      "id_lookup": false,
+      "id_mapping": false,
+      "graph_references": false,
+      "graph_citations": false,
+      "recommend_related": false,
+      "metrics_raw_citations": false,
+      "metrics_normalized": false,
+      "text_abstract": false,
+      "text_fulltext": false
+    },
+    "cost_model": {
+      "search": {
+        "usd_per_call": 0.0,
+        "daily_quota": null,
+        "rate_limit_rps": 1.0
+      }
+    },
+    "field_map": {
+      "title": "title",
+      "link": "urls",
+      "snippet": "abstract"
+    },
+    "reliability": {
+      "p50_latency_ms": 600,
+      "p95_latency_ms": 1500,
+      "error_taxonomy": [
+        "timeout",
+        "rate_limit",
+        "auth",
+        "http",
+        "parse",
+        "unknown"
+      ],
+      "retry_policy": "exponential",
+      "max_retries": 2
+    },
+    "quota_remaining": {}
+  }
+]

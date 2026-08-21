@@ -35,13 +35,18 @@ let commandArgs;
 let cwd;
 
 if (dev) {
-	const tsxPath = join(widiRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+	// Run tsx's own JS entry under the current Node instead of the `.bin` shim: on
+	// Windows that shim is a `.cmd`, and Node >= 20 refuses to spawn one without
+	// `shell: true` (EINVAL). Going straight to the entry keeps a single code path
+	// across platforms and avoids shell quoting for paths.
+	const tsxPath = join(widiRoot, "node_modules", "tsx", "dist", "cli.mjs");
 	if (!existsSync(tsxPath)) {
 		process.stderr.write("WIDI dependencies are not installed. Run `npm run bootstrap` first.\n");
 		process.exit(1);
 	}
-	command = tsxPath;
+	command = process.execPath;
 	commandArgs = [
+		tsxPath,
 		"--tsconfig",
 		join(widiRoot, "apps", "widi", "tsconfig.json"),
 		join(widiRoot, "apps", "widi", "src", "cli.ts"),

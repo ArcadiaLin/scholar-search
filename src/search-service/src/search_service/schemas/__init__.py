@@ -22,8 +22,26 @@ from search_service.schemas.paper import (
     merge_papers,
     search_result_item_to_paper,
 )
-from search_service.schemas.requests import PassthroughRequest, SearchRequest
-from search_service.schemas.responses import ProviderInfo, SearchResponse
+from search_service.schemas.requests import (
+    ExpandRequest,
+    FacetRequest,
+    FulltextRequest,
+    PassthroughRequest,
+    RankRequest,
+    SearchRequest,
+)
+from search_service.schemas.responses import (
+    BudgetResponse,
+    ExpandResponse,
+    FacetResponse,
+    FulltextPaper,
+    FulltextResponse,
+    FulltextSection,
+    PaperResponse,
+    ProviderInfo,
+    RankResponse,
+    SearchResponse,
+)
 from search_service.schemas.state import (
     CandidateCounts,
     Failure,
@@ -34,19 +52,31 @@ from search_service.schemas.state import (
 
 __all__ = [
     "Author",
+    "BudgetResponse",
     "BurstPolicy",
     "CandidateCounts",
     "CitationEdge",
     "CostModel",
     "CountsByYear",
+    "ExpandRequest",
+    "ExpandResponse",
+    "FacetRequest",
+    "FacetResponse",
     "Failure",
     "FieldProvenance",
+    "FulltextPaper",
+    "FulltextRequest",
+    "FulltextResponse",
+    "FulltextSection",
     "IssuedQuery",
     "Paper",
+    "PaperResponse",
     "PassthroughRequest",
     "Provenance",
     "ProviderCapabilities",
     "ProviderInfo",
+    "RankRequest",
+    "RankResponse",
     "RankedPaper",
     "ReliabilityProfile",
     "SearchRequest",

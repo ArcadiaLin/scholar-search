@@ -34,6 +34,7 @@ async def search(http_request: Request, request: SearchRequest) -> SearchRespons
             sources=request.sources,
             timeout_ms=request.timeout_ms,
             provider_params=request.provider_params,
+            subqueries=request.subqueries,
         )
     except AggregationError as exc:
         return JSONResponse(

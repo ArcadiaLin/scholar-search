@@ -1,0 +1,139 @@
+{
+  "papers": [
+    {
+      "paper_id": "10.48550/arXiv.1706.03762",
+      "doi": "10.48550/arXiv.1706.03762",
+      "arxiv_id": "1706.03762",
+      "openalex_id": "W2963403868",
+      "cluster_id": null,
+      "external_ids": {},
+      "title": "Attention Is All You Need",
+      "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks.",
+      "authors": [
+        {
+          "name": "Ashish Vaswani",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        },
+        {
+          "name": "Noam Shazeer",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        },
+        {
+          "name": "Niki Parmar",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        },
+        {
+          "name": "Jakob Uszkoreit",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        },
+        {
+          "name": "Llion Jones",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        },
+        {
+          "name": "Aidan Gomez",
+          "orcid": null,
+          "affiliation": null,
+          "h_index": null
+        }
+      ],
+      "venue": "NeurIPS",
+      "year": 2017,
+      "published": "2017-06-12",
+      "updated": null,
+      "version": null,
+      "type": null,
+      "urls": {
+        "paper": "https://arxiv.org/abs/1706.03762",
+        "pdf": "https://arxiv.org/pdf/1706.03762.pdf"
+      },
+      "citation_count": null,
+      "normalized_impact": null,
+      "citation_percentile": null,
+      "counts_by_year": null,
+      "author_h_index": null,
+      "references": null,
+      "citations": null,
+      "is_retracted": null,
+      "record_thinness": null,
+      "citation_confidence": null,
+      "field_provenance": {},
+      "sources": [
+        "openalex"
+      ],
+      "raw": null,
+      "score": 0.03278688524590164,
+      "rank": 1,
+      "tier": "partially_relevant"
+    }
+  ],
+  "search_state": {
+    "issued_queries": [
+      {
+        "provider": "arxiv",
+        "mode": "aggregated",
+        "query": "transformer attention",
+        "raw": null,
+        "cost_usd": null,
+        "latency_ms": 0
+      },
+      {
+        "provider": "arxiv",
+        "mode": "aggregated",
+        "query": "self-attention",
+        "raw": null,
+        "cost_usd": null,
+        "latency_ms": 0
+      },
+      {
+        "provider": "openalex",
+        "mode": "aggregated",
+        "query": "transformer attention",
+        "raw": null,
+        "cost_usd": null,
+        "latency_ms": 0
+      },
+      {
+        "provider": "openalex",
+        "mode": "aggregated",
+        "query": "self-attention",
+        "raw": null,
+        "cost_usd": null,
+        "latency_ms": 0
+      }
+    ],
+    "selected_sources": [
+      "arxiv",
+      "openalex"
+    ],
+    "filters": {
+      "subqueries": [
+        "self-attention"
+      ]
+    },
+    "candidate_counts": {
+      "recalled": 2,
+      "returned": 1
+    },
+    "failures": []
+  },
+  "provenance": {
+    "per_paper_sources": {
+      "10.48550/arXiv.1706.03762": [
+        "openalex"
+      ]
+    }
+  },
+  "cost_usd": 0.0,
+  "elapsed_ms": 0
+}

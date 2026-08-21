@@ -1,0 +1,12 @@
+[
+	{
+		"id": "rag-code-completion",
+		"query": "Find the literature on retrieval-augmented generation for code completion.",
+		"endDate": "2024-06-30"
+	},
+	{
+		"id": "diffusion-conformers",
+		"query": "Find the literature on diffusion models for molecular conformer generation.",
+		"endDate": "2024-06-30"
+	}
+]

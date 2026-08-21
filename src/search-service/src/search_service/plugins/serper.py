@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import unquote
 
@@ -97,6 +99,8 @@ class SerperClient:
         self._min_interval = 1.0 / self.rate_limit_rps
         self._last_request_at = 0.0
         self._lock = asyncio.Lock()
+        self._session_lock = asyncio.Lock()
+        self._active_sessions = 0
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -168,6 +172,24 @@ class SerperClient:
 
         raise SourceError("serper", "unknown", f"Serper request failed after retries: {last_exception}")
 
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[None]:
+        """Bracket one operation, closing the shared client when the last one leaves.
+
+        See ``OpenAlexClient.session``: the aggregator issues several queries per
+        provider concurrently, and closing after each one closed the connection
+        under the calls still in flight.
+        """
+        async with self._session_lock:
+            self._active_sessions += 1
+        try:
+            yield
+        finally:
+            async with self._session_lock:
+                self._active_sessions -= 1
+                if self._active_sessions == 0:
+                    await self.close()
+
     async def close(self) -> None:
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
@@ -190,15 +212,13 @@ class SerperPlugin(SourcePlugin):
         end_date: str | None = None,
         native_params: dict[str, Any] | None = None,
     ) -> list[SearchResultItem]:
-        try:
+        async with self._client.session():
             return await self._client.search(
                 query,
                 top_k,
                 end_date=end_date,
                 native_params=native_params,
             )
-        finally:
-            await self._client.close()
 
 
 Plugin = SerperPlugin
