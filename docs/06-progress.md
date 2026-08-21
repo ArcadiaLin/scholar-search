@@ -15,7 +15,7 @@
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
 | S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
-| S7 | 其余检索工具 | DONE | `PENDING_S7` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
+| S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
 | S8 | Reviewer 通道 | TODO | | |
 | S9 | RPC 评测入口 | TODO | | |
 
@@ -710,7 +710,7 @@ $T^M$ 补齐到九个工具。**照 S2 的形状做**，但 Service 侧五个端
   这正是失败分类要做的事，但也说明 `expand_citations` 的工具描述
   将来可以更明确地说"用 list_providers 里那个源的 id 空间"。
 
-- commit: `PENDING_S7`
+- commit: `ec7b377`
 
 
 
