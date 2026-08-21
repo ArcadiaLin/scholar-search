@@ -1106,6 +1106,36 @@ arXiv 按 **OR** 展开（其 Atom 响应的 `<title>` 会回显解析结果，�
 会话记录在 `widis/.widi-scholar/runs/.../20260821T072357Z_search-d9w6/session.jsonl`，
 该目录被 `.gitignore` 排除，所以 F-1..F-7 的证据全部内嵌在 08 文档里。
 
+### 2026-08-21 — merge LLM provider 层，并排出 S10/S11（不是 stage）
+
+`aac617c`（PR #10）给 Search Service 加了 LLM provider 抽象与 `POST /judge`
+转发端点，765 行，`pytest -q` 126 passed。它解开的是一个真实阻塞——
+在此之前 Service 根本没有调 LLM 的能力，$NP_k^{judge}$ 的消费者无处安放。
+
+审阅得到三个判断，详见 `docs/09-next-stages.md`：
+
+1. **它是传输层，不是判别器**。`api/judge.py` 的 docstring 自陈不含 prompt 模板
+   与结果解析。离 NPj 落地还差四样：载体、Configure 通路、L3b 接进排序栈、
+   判别结果进 provenance。
+2. **判别器不会成为第十一个工具**。`prototype.md` §7.1 把
+   "决定花多少预算做判别是 Agent 的策略，执行判别是 Service 的实现"
+   写在了工具表下面；`05-skill-decomposition.md` 给 `judge_relevance`
+   的归属是 `SVC` 不是 `TOOL`。这条性质当前守住了（`/judge` 未注册成工具），
+   以后也要守住。
+3. **这段代码没有对应的验收判据**（记为 D-09）。现在测的是"转发通不通"，
+   而 `prototype.md` §4 要求的是"按准则分级、可归因、带版本号"。
+   判据缺席时，能力缺口会以"看起来完成了"的形式沉淀下来——
+   这正是本文 `DONE†` 那一套记号存在的理由。
+
+同时新增潜伏缺陷 **F-9**：`llm/providers/openai_compatible.py:49` 用
+`os.environ` 取密钥，而 pydantic-settings 读 `.env` 不写回 `os.environ`——
+与刚修掉的 F-8 同族、同样静默。现在不发作只因为默认 provider 是 vllm 且
+`config.yaml` 里写死 `api_key: "EMPTY"`。
+
+另外把 `07-widi-mapping.md` 补了 §3.5，显式区分两个 LLM 调用点：
+Main 的推理（**不可** tool-reducible，U-03 卡的是它）与 Service 侧的
+无状态 worker（**必须**在 Service 内）。这个区分之前只在讨论里，没有落纸。
+
 
 
 

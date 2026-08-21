@@ -424,6 +424,43 @@ on the call but does not affect ranking in this build.
 
 ---
 
+## F-9 — LLM provider 的凭据走 `os.environ`，同样读不到 `.env`（未修）
+
+**现象**：暂无——这是 F-8 的**同族潜伏缺陷**，目前不咬人，但会。
+
+**根因**：`llm/providers/openai_compatible.py:49` 这样取密钥：
+
+```python
+return os.environ.get(env_name) or os.environ.get("LLM_API_KEY") or None
+```
+
+而 pydantic-settings 读 `.env` 是**读进 model，不写回 `os.environ`**。实测：
+
+```
+pydantic Settings 从 .env 读到 openalex key : 有值
+同一个变量在 os.environ 里                  : 空
+```
+
+所以只要有人把 `OPENAI_API_KEY` 写进 `.env`，LLM provider 就会静默地拿不到——
+和 F-8 一模一样的失败模式，一模一样的静默方式。
+
+现在不发作只因为两件事恰好成立：默认 provider 是局域网 vllm，
+`config.yaml` 里写的是字面量 `api_key: "EMPTY"`；而 `.env` 里也确实没有 OpenAI 的 key。
+两个条件任一改变就会复现。
+
+**补上它需要**：跟 OpenAlex 与 Serper 走同一条路——在 `Settings` 上加字段，
+在 `ServiceConfig` 里用 `cfg.get("api_key") or self.settings.xxx` 的写法解析
+（`config.py:136-139` 是现成的样板），不要在 provider 内部读 `os.environ`。
+
+**附带的一条命名意见**（不是缺陷）：端点叫 `/judge`，但 `api/judge.py`
+实际是通用 LLM 转发，它自己的 docstring 也说了不含 prompt 模板与结果解析。
+Service 侧要用 LLM 的地方不止判别器——还有 L3a 的 cross-encoder 打分
+（`cf.score.relevance`）和查询扩展的语义部分。当前名字把**传输**和**角色**绑死，
+加第二个消费者时会别扭。`/llm/chat` 作为传输、judge 作为其上一层更贴合分工。
+趁只有一个消费者时改，成本最低。
+
+---
+
 ## 会话中的 Agent 行为观察
 
 这一节记的不是代码缺陷，而是**这次会话暴露出的 agent 行为特征**。
@@ -472,6 +509,7 @@ on the call but does not affect ranking in this build.
 | F-2 | **新**。S6 验的是 $\bar{\tau}_t$ 的过滤白名单，没有验失败路径的信息完整性 |
 | F-3 / F-4 | 扩展 G-5（$\theta^S_k$ 未参数化）到预算维度，并给出具体数字 |
 | F-8 | **新，且已修**。此前所有 stage 的验收都跑得通，因为匿名调用在配额未耗尽时正常返回——静默降级不会让任何一条判据变红 |
+| F-9 | **新，未修**。潜伏缺陷，随 `aac617c` 的 LLM provider 层引入；与 F-8 同族 |
 | F-5 | 与 G-4 相关；新增的是评测协议侧的时间窗映射 |
 | F-6 | 是 G-3（`intent` 无作用面）与 G-5 的量化后果，非新缺口 |
 | B-5 | 为 G-1 提供了一个真实案例 |

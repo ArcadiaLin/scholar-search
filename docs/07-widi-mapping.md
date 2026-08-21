@@ -25,6 +25,9 @@
 | Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地（G-2） |
 | $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地 |
 | Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S8 通道已通；介入时机偏在 episode 之后（G-1） |
+| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `09-next-stages.md` S11 |
+| Service 侧 LLM worker | `llm/` provider 抽象 + `POST /judge` | `src/search-service/src/search_service/llm/` | 传输层已落地（`aac617c`）；判别策略层未落地 |
+| $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | 无载体 | 未落地，见 `09-next-stages.md` S10 |
 
 "状态"列是**当下**的实话，不是计划。路线图的 stage 状态在 `06-progress.md`；
 `G-n` 指向该文件的"验收缺口"一节——那里记的是 stage 验收已通过、
@@ -219,6 +222,56 @@ gate 是 `core/review.ts` 里的纯函数、$C^R_t \neq C^M_t$ 有逐片段查�
 
 这一条要单独点明，是因为"通道通了"和"介入有作用面"看起来很像：
 两者都能产出一条 `provide_advice` 并落盘，区别只在于 Main 有没有机会读到它。
+
+### 3.5 两个 LLM 调用点：哪一个可以被封装进 Search Service
+
+系统里有两处调用语言模型，物理上会打到同一台 vllm 机器，**治理上是两套契约**。
+把它们混为一谈会导出一个很有说服力但错误的结论——"既然本地模型的直接调用是
+无状态 worker，那它就该被封装进 Search Service"——所以这里显式区分。
+
+**调用点 A：Main Search Agent 自己的推理。** 走 WIDI 的 provider 通道。
+**它在原则上不可被 reduce 成工具。** `design.md` §4 的边界判据是
+"谁跨调用持有决策状态"，而 Main 的推理**就是那个状态本身**。
+把它封装成 Service 的一个端点，ReAct 轨迹就消失了，$\bar{\tau}_t$ 无从谈起，
+Reviewer 也就没有观察对象——被测对象被取消掉了。
+它是整条架构里唯一一个不可 tool-reducible 的 LLM 调用。
+
+这也是为什么 `06-progress.md` 的 **U-03**（WIDI 无法固定采样参数）
+不能靠"封装进 Search Service"绕过：它卡的正是 A。
+
+**调用点 B：Service 侧的无状态 LLM worker。** L3b 判别器、L3a 的语义打分、
+查询扩展的语义部分。**这些确实是无状态 worker**，`design.md` §4 对它们的要求
+写得很死：
+
+> Service 内的判别器必须是无状态 worker（$y=f(x)$，输入自足、无跨调用记忆、
+> 不做动作选择），否则它就是第二个决策主体，不能算在 Service 里。
+
+B 完全属于 Service，采样参数也完全由我们掌握——因为那是我们自己写的 HTTP 调用，
+参数就在 `config.yaml` 里，属于 $\theta^S_k$。
+
+| | A：Agent 推理 | B：Service 侧 worker |
+| --- | --- | --- |
+| 载体 | WIDI provider 通道 | `src/search-service/src/search_service/llm/` |
+| 跨调用持有决策状态 | **是**（这就是它的作用） | 否 |
+| 可否封装成工具 | **不可** | 可，且**必须**在 Service 内 |
+| 采样参数归属 | WIDI 配置（U-03 卡在这） | $\theta^S_k$，`config.yaml` |
+| 是否对 Agent 可见 | 它就是 Agent | 否，仅经 `judge_level` 间接触发 |
+
+**当前状态**：B 的传输层已落地（2026-08-21 merge，`aac617c`）——
+`llm/base.py` + `llm/providers/openai_compatible.py` + `llm/registry.py`，
+经 `POST /judge` 转发，默认 provider 是局域网 vllm。
+但它**只是传输层**：`api/judge.py` 的 docstring 明确写了不含 prompt 模板与结果解析。
+判别策略层、$NP_k^{\mathrm{judge}}$ 载体与 L3b 接入排序栈都还没有，
+见 `docs/09-next-stages.md` 的 S11。
+
+A 仍然卡在 U-03，需要用户授权才能动 vendored 的 `packages/agent`。
+
+**一条现在就该定的约定**：B 的采样参数（temperature、max_tokens、模型版本）
+必须从第一天就进 `config.yaml` 并进 provenance。`prototype.md` §4.1 要求
+judge 固定 `temperature 0`、固定 prompt 模板、结构化输出 schema，
+§4.2 的输出还要带 `rubric_version` / `criteria_version` / `model_version`。
+趁判别策略层还没写，现在钉住成本最低；等它变成第三处硬编码常量
+（前两处是 `api/probe.py` 的排序权重与 tier 阈值，见 G-5）就贵了。
 
 ---
 
