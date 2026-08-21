@@ -144,6 +144,39 @@ describe("what the trace does record", () => {
 		assert.deepEqual(snapshot.calls[0]?.searchState?.filters.subqueries, ["sub"]);
 	});
 
+	it("carries the answer pool, and the latest state of it wins", () => {
+		// The pool reaches the trace because it is written through a tool call, so
+		// nothing new had to be allowed in - which is the argument `plan.md` §3.5
+		// makes for putting the pool in front of the Reviewer at all.
+		const trace = collector();
+		const emit = (id: string, papers: unknown[], removed: unknown[] = []) => {
+			trace.record({ type: "tool_execution_start", toolCallId: id, toolName: "update_answer_pool", args: {} });
+			trace.record({
+				type: "tool_execution_end",
+				toolCallId: id,
+				toolName: "update_answer_pool",
+				result: { content: [], details: { pool: { papers, removed, note: "n" } } },
+				isError: false,
+			});
+		};
+		emit("p1", [{ canonicalId: "arxiv:1", title: "One", why: "first" }]);
+		emit("p2", [
+			{ canonicalId: "arxiv:1", title: "One", why: "first" },
+			{ canonicalId: "arxiv:2", title: "Two", why: "second" },
+		]);
+
+		const pool = trace.snapshot().answerPool;
+		assert.equal(pool?.committed, 2);
+		assert.equal(pool?.lastChangedBy, "p2");
+		assert.equal(pool?.papers[1]?.why, "second", "the why is the informative part and must survive");
+	});
+
+	it("reports no pool at all when the agent never committed to anything", () => {
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		assert.equal(trace.snapshot().answerPool, null);
+	});
+
 	it("keeps the query as actually issued alongside the query the agent wrote", () => {
 		// A Reviewer that reads only the agent's wording cannot see a provider
 		// rewrite, and the rewrite that mattered turned every query into an OR bag

@@ -22,6 +22,17 @@ export const ADVICE_ACTIONS = [
 	"rerank",
 	"increase_diversity",
 	"check_constraint",
+	/**
+	 * Added in S10, and the only extension of this frozen set so far.
+	 *
+	 * Writing "you must maintain the answer pool" into the profile is a weak
+	 * constraint - the 2026-08-21 session described a whole workflow in its opening
+	 * turn and then followed none of it over 37 calls (`docs/develop/backlog.md`
+	 * B-4). The structural enforcement is that the benchmark reads only the pool;
+	 * this is the softer half, for the case where the agent is searching well and
+	 * simply has not committed to anything (`docs/develop/plan.md` §3.4).
+	 */
+	"organize_answer",
 	"stop",
 ] as const;
 
@@ -233,6 +244,13 @@ export function renderTraceForReviewer(
 			readonly errorMessage: string | undefined;
 		}[];
 		readonly evidence: readonly { readonly paperId: string; readonly title: string; readonly foundBy: string }[];
+		readonly answerPool: {
+			readonly committed: number;
+			readonly withdrawn: number;
+			readonly note: string;
+			readonly papers: readonly { readonly canonicalId: string; readonly title: string; readonly why: string }[];
+			readonly removed: readonly { readonly canonicalId: string; readonly title: string; readonly reason: string }[];
+		} | null;
 		readonly budget: {
 			readonly totalCalls: number;
 			readonly failedCalls: number;
@@ -262,6 +280,23 @@ export function renderTraceForReviewer(
 		lines.push("", `Source failures (${trace.failures.length}):`);
 		for (const failure of trace.failures.slice(0, 20)) {
 			lines.push(`  - ${failure.source ?? "service"} [${failure.errorType}] ${failure.message}`);
+		}
+	}
+
+	// The pool goes before the call list because it is the one section where a
+	// coverage gap is visible rather than inferable: a Reviewer reading only the
+	// queries has to guess what the agent thinks it found.
+	const pool = trace.answerPool;
+	if (pool === null) {
+		lines.push("", "Answer pool: EMPTY - the agent has not committed to any paper yet.");
+	} else {
+		lines.push("", `Answer pool: ${pool.committed} committed, ${pool.withdrawn} withdrawn.`);
+		if (pool.note !== "") lines.push(`  note: ${pool.note}`);
+		for (const entry of pool.papers.slice(0, maxEvidence)) {
+			lines.push(`  ${entry.canonicalId} :: ${entry.title.slice(0, 120)}`, `      why: ${entry.why.slice(0, 300)}`);
+		}
+		for (const entry of pool.removed.slice(0, 20)) {
+			lines.push(`  withdrawn ${entry.canonicalId} :: ${entry.title.slice(0, 120)} - ${entry.reason.slice(0, 200)}`);
 		}
 	}
 

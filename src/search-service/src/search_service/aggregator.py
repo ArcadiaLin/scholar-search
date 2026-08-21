@@ -23,6 +23,7 @@ from search_service.schemas import (
     Provenance,
     RankedPaper,
     SearchState,
+    canonical_key,
     merge_papers,
     search_result_item_to_paper,
 )
@@ -119,7 +120,11 @@ class Aggregator:
         self,
         items_by_list: dict[str, list[SearchResultItem]],
     ) -> dict[str, tuple[Paper, list[tuple[str, int]]]]:
-        """Group normalized results by stable ID and merge duplicates.
+        """Group normalized results by canonical identity and merge duplicates.
+
+        Identity comes from ``canonical_key``, not from a local expression: the
+        rule has to be the same one the answer pool and every endpoint use, or
+        "the same paper" means different things in different places.
 
         The outer key identifies one *recall list*, which is a (provider, query)
         pair rather than a provider: a paper found by three subqueries contributes
@@ -132,7 +137,7 @@ class Aggregator:
         for list_id, items in items_by_list.items():
             for item in items:
                 paper = search_result_item_to_paper(item)
-                key = paper.doi or paper.arxiv_id or paper.openalex_id or paper.paper_id
+                key = canonical_key(paper)
                 rank = item.source_rank or 1
                 groups.setdefault(key, []).append((paper, list_id, rank))
 

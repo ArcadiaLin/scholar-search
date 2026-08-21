@@ -93,6 +93,27 @@ export interface TraceEvidence {
 	readonly foundBy: string;
 }
 
+/**
+ * The answer pool as the trace carries it.
+ *
+ * Not a widening of what the Reviewer may see: the pool is written *through a
+ * tool call*, so its content is already in the trace as that call's arguments.
+ * This is a projection of it into a readable shape, which is what turns
+ * "coverage is insufficient" from something a Reviewer has to infer from a list
+ * of queries into something it can read off (`docs/develop/plan.md` §3.5, third
+ * reason). Eight superpixel papers and no active-learning paper is visible here
+ * and nowhere else.
+ */
+export interface TraceAnswerPool {
+	readonly committed: number;
+	readonly withdrawn: number;
+	readonly note: string;
+	readonly papers: readonly { readonly canonicalId: string; readonly title: string; readonly why: string }[];
+	readonly removed: readonly { readonly canonicalId: string; readonly title: string; readonly reason: string }[];
+	/** The call that last changed it, so a claim about the pool has an address. */
+	readonly lastChangedBy: string | null;
+}
+
 export interface PublicSearchTrace {
 	readonly agentId: string;
 	readonly profileId: string;
@@ -101,6 +122,8 @@ export interface PublicSearchTrace {
 	readonly calls: readonly TraceCall[];
 	/** The evidence ids a Reviewer may cite. Bounded, like everything else here. */
 	readonly evidence: readonly TraceEvidence[];
+	/** What the agent has committed to as its answer. `null` until it commits to anything. */
+	readonly answerPool: TraceAnswerPool | null;
 	readonly budget: TraceBudget;
 	readonly candidateCounts: { readonly recalled: number; readonly returned: number };
 	readonly failures: readonly {
@@ -236,6 +259,50 @@ function collectEvidence(details: unknown, toolCallId: string, into: Map<string,
 	}
 }
 
+/**
+ * Read the answer pool out of an `update_answer_pool` result.
+ *
+ * Bounded like everything else, and the `why` / `reason` texts are kept because
+ * they are the whole informative part: "eight papers" says nothing about coverage,
+ * "eight papers, all of them about superpixel segmentation" says the thing a
+ * Reviewer is for.
+ */
+function parseTraceAnswerPool(details: unknown, toolCallId: string, max: number): TraceAnswerPool | undefined {
+	if (!isRecord(details)) return undefined;
+	const pool = details.pool;
+	if (!isRecord(pool)) return undefined;
+	const papers: { canonicalId: string; title: string; why: string }[] = [];
+	if (Array.isArray(pool.papers)) {
+		for (const entry of pool.papers.slice(0, max)) {
+			if (!isRecord(entry)) continue;
+			papers.push({
+				canonicalId: typeof entry.canonicalId === "string" ? entry.canonicalId : "",
+				title: typeof entry.title === "string" ? entry.title : "",
+				why: typeof entry.why === "string" ? entry.why : "",
+			});
+		}
+	}
+	const removed: { canonicalId: string; title: string; reason: string }[] = [];
+	if (Array.isArray(pool.removed)) {
+		for (const entry of pool.removed.slice(0, max)) {
+			if (!isRecord(entry)) continue;
+			removed.push({
+				canonicalId: typeof entry.canonicalId === "string" ? entry.canonicalId : "",
+				title: typeof entry.title === "string" ? entry.title : "",
+				reason: typeof entry.reason === "string" ? entry.reason : "",
+			});
+		}
+	}
+	return {
+		committed: Array.isArray(pool.papers) ? pool.papers.length : 0,
+		withdrawn: Array.isArray(pool.removed) ? pool.removed.length : 0,
+		note: typeof pool.note === "string" ? pool.note : "",
+		papers,
+		removed,
+		lastChangedBy: toolCallId,
+	};
+}
+
 /** The tool's own error text, which is the actionable diagnostic the tool threw. */
 function errorMessageOf(result: unknown): string | undefined {
 	if (!isRecord(result)) return undefined;
@@ -259,6 +326,9 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 	const evidence = new Map<string, TraceEvidence>();
 	let arrivals = 0;
 	let dropped = 0;
+	// The latest pool wins, and "latest" is arrival order rather than sequence
+	// number: the pool the tool reported last is the pool that is on disk.
+	let answerPool: TraceAnswerPool | null = null;
 
 	return {
 		record(event: unknown): boolean {
@@ -308,6 +378,8 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				if (state !== undefined) record.searchState = state;
 				if (observed.isError === true) record.errorMessage = errorMessageOf(observed.result);
 				collectEvidence(details, toolCallId, evidence, maxEvidence);
+				const pool = parseTraceAnswerPool(details, toolCallId, maxEvidence);
+				if (pool !== undefined) answerPool = pool;
 			}
 			return true;
 		},
@@ -343,6 +415,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				subqueries,
 				calls,
 				evidence: [...evidence.values()],
+				answerPool,
 				budget: { totalCalls: calls.length, failedCalls, callsByTool, droppedCalls: dropped },
 				candidateCounts: { recalled, returned },
 				failures,

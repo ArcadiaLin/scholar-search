@@ -9,7 +9,7 @@
 | | 是什么 | 编号 | 位置 |
 | --- | --- | --- | --- |
 | **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-11` | 前半篇 |
-| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-5` | 后半篇 |
+| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-6` | 后半篇 |
 
 编号避开已被占用的 `D-`（决策，见 `decisions.md`）、`U-`（上游缺陷）、
 `SV-`（Service 缺陷）、`E-`（环境）——后三类在 `history.md`。
@@ -638,7 +638,7 @@ E 轴（引文扩展）在当前实现下没有测量对象。
 
 ---
 
-## 验收缺口 G-1..G-5
+## 验收缺口 G-1..G-6
 
 这一节记的是"**stage 验收通过、但设计要求尚未满足**"的部分。
 
@@ -730,6 +730,29 @@ WIDI revision、profile、模型、extension 版本、生效预算、启动诊�
 **后果**：S5 那张对照表无法在仓库内一键复现；将来任何用 S9 跑出来的数字同样如此。
 
 **补上它需要**：见 `history.md` 的 **U-03**。三条路径互斥，需要用户拍板选一条。
+
+### G-6 — S10 判据 4 的后半只由单测证明，没有活的 Reviewer 读过池子（S10）
+
+**设计要求**：`plan.md` §3.5 第三条——答案池的价值之一是让 Reviewer
+**在 episode 中途**读出覆盖缺口（"池中八篇全是 superpixel segmentation、
+一篇 active learning 都没有"）。判据 4 的后半写的是
+"Reviewer 的上下文能读到池子当前内容"。
+
+**实际实现**：`renderTraceForReviewer` 会渲染 pool 段（committed / withdrawn /
+note / 每条的 `why`），空池渲染成 `Answer pool: EMPTY`；两条单测覆盖
+（`review.test.ts`）。`PublicSearchTrace.answerPool` 在真实运行里确实带着 14 条
+落进了 `search-to8d.json`。
+
+**没有验的**：**一个真的 Reviewer 读了它**。Reviewer 仍挂在 `agent_idle` 上、
+`SCHOLAR_REVIEWER` 默认关闭，而且即使打开也只在 episode 结束后介入（G-1）。
+所以"池子对 Reviewer 有作用面"这件事，目前只有渲染函数层面的证据。
+
+**为什么不在 S10 里补**：补它就是把 Reviewer 的触发时机改掉，那是 S11 的全部内容
+（`plan.md` §4，`../reviewer-design.md` §5.3）。在 S10 里顺手改会把两个 stage
+混进一个 commit，也会让 S11 的判据 2 失去对照。
+
+**补上它需要**：S11 的判据 2 与判据 4 一起跑一次真实检索，确认 Reviewer 在
+**池子被写入之后**收到的轨迹里含 pool 段。这是 S11 的验收，不需要新增工作项。
 
 ### G-5 — 排序栈只有 L1 真实存在，判别器完全没有（S7）
 

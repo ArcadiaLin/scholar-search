@@ -19,6 +19,14 @@
  * "the agent looked", "the agent re-ordered" and "the agent searched again" have
  * to stay distinguishable in the trajectory.
  *
+ * A tenth is registered alongside them but is not one of the nine:
+ *
+ *   update_answer_pool  the episode's answer, as data rather than as prose
+ *
+ * The nine are retrieval tools; this one is the output mechanism, which is a
+ * different category and the reason $T^M$ going from nine to ten is acceptable
+ * where going to twelve would not be (`docs/develop/decisions.md` D-08).
+ *
  * `list_providers` comes first because it is the precondition for every other
  * tool that lets the agent write a provider-native query: the agent cannot pick
  * a source, a syntax or a field before it knows what exists and what is left of
@@ -43,6 +51,12 @@ import {
 	type ExtensionContext,
 	type ExtensionDefinition,
 } from "../../../../packages/widi/apps/widi/src/core/extension/api.ts";
+import {
+	type AnswerPool,
+	type AnswerPoolSnapshot,
+	createAnswerPool,
+	renderPoolSummary,
+} from "./core/answer-pool.ts";
 import { ADVICE_ACTIONS, type AdviceGate, createAdviceGate, renderTraceForReviewer } from "./core/review.ts";
 import {
 	createServiceClient,
@@ -290,8 +304,14 @@ function formatSearchState(state: SearchStateRecord): string {
  * and an evaluation run has to record which tool set produced its numbers
  * (`AGENTS.md` §5.3). Bump it whenever the registered tools or their contracts
  * change - a run recorded against `1` must mean the same nine tools next month.
+ *
+ * `2`: `update_answer_pool` registered (S10); `search_metadata`'s `query`
+ * contract changed from a natural-language statement to AND-combined terms, and
+ * `SearchState.issued_queries` gained `native_query` (F-1). A run recorded
+ * against `1` is not comparable to one recorded against `2` on retrieval
+ * behaviour or on call composition.
  */
-export const EXTENSION_VERSION = "1";
+export const EXTENSION_VERSION = "2";
 
 export const TRACE_DIR_ENV_VAR = "SCHOLAR_TRACE_DIR";
 /**
@@ -349,6 +369,29 @@ async function writeTrace(trace: PublicSearchTrace, cwd: string): Promise<string
 		return path;
 	} catch {
 		// A trace that cannot be written must not break the search it describes.
+		return undefined;
+	}
+}
+
+/**
+ * Persist the answer pool next to the trace, under the same agent-scoped name.
+ *
+ * On disk rather than only in memory because this file *is* the deliverable the
+ * benchmark reads: the scorer opens `${agentId}.answer.json` and computes
+ * Recall@k from it, and an episode whose pool never reached disk is an episode
+ * with no answer (`docs/develop/plan.md` §3.4). Written on every change rather
+ * than at the end, so a run that dies mid-episode still leaves what it had.
+ */
+async function writeAnswerPool(snapshot: AnswerPoolSnapshot, cwd: string): Promise<string | undefined> {
+	try {
+		const directory = resolveTraceDir(process.env, cwd);
+		await mkdir(directory, { recursive: true });
+		const path = join(directory, `${snapshot.agentId}.answer.json`);
+		await writeFile(path, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+		return path;
+	} catch {
+		// Unlike the trace, this failure is worth surfacing to the caller, so the
+		// tool checks the return value rather than this swallowing it silently.
 		return undefined;
 	}
 }
@@ -425,6 +468,16 @@ async function writeReview(
  * episode.
  */
 const collectors = new Map<string, TraceCollector>();
+/**
+ * One answer pool per agent, for the same reason the collector is per agent.
+ *
+ * Per agent rather than per session is the whole point: the eval runner spawns a
+ * fresh agent per query inside one session precisely so query N cannot see query
+ * N-1's results (`experiments/eval-runner/run.mjs`). A session-scoped pool would
+ * collapse every query's answer into one, and each query's number would stop
+ * meaning anything (`docs/develop/plan.md` §3.2).
+ */
+const answerPools = new Map<string, AnswerPool>();
 const gates = new Map<string, AdviceGate>();
 const tracesUnderReview = new Map<string, PublicSearchTrace>();
 const reviewsRun = new Map<string, number>();
@@ -1314,6 +1367,192 @@ const extension: ExtensionDefinition = {
 				let text = lines.join("\n");
 				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
 				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		/**
+		 * The pool for the agent this activation belongs to.
+		 *
+		 * An extension activates once per agent, so `api.agentId` is the episode's
+		 * identity - the same reasoning that moved the collector map to module scope.
+		 */
+		const poolFor = (agentId: string): AnswerPool => {
+			const existing = answerPools.get(agentId);
+			if (existing) return existing;
+			const created = createAnswerPool({ agentId, now: () => new Date().toISOString() });
+			answerPools.set(agentId, created);
+			return created;
+		};
+
+		api.registerTool({
+			name: "update_answer_pool",
+			label: "Update Answer Pool",
+			description:
+				"Record which papers answer the question, incrementally. This is where your answer lives: the " +
+				"evaluation reads this pool and nothing else, so a paper you only mention in prose does not count, " +
+				"and an episode that ends with an empty pool has produced no answer at all. " +
+				"Add a paper as soon as you are satisfied it belongs, with `why` saying what it contributes - the " +
+				"`why` fields are what carry the structure of your answer. Withdraw a paper when you change your " +
+				"mind; `reason` is required, and a withdrawal with its reason is a more useful record than a quiet " +
+				"deletion. Adding the same paper twice updates its `why` rather than duplicating it, and identifiers " +
+				"from different sources for one paper resolve to one entry. Call it repeatedly; do not batch it to " +
+				"the end of the episode.",
+			parameters: {
+				type: "object",
+				properties: {
+					add: {
+						type: "array",
+						maxItems: 25,
+						items: {
+							type: "object",
+							properties: {
+								paper_id: {
+									type: "string",
+									description: "The paper's identifier: a search result `id`, a DOI, an arXiv id or an OpenAlex id.",
+								},
+								why: {
+									type: "string",
+									description:
+										"What this paper contributes to the answer - the method, the direction, the claim it settles. " +
+										"Not a restatement of the title.",
+								},
+							},
+							required: ["paper_id", "why"],
+						},
+						description: "Papers to commit to.",
+					},
+					remove: {
+						type: "array",
+						maxItems: 25,
+						items: {
+							type: "object",
+							properties: {
+								paper_id: { type: "string", description: "The identifier you used when you added it." },
+								reason: {
+									type: "string",
+									description: "Why it does not belong after all. Required - an unexplained withdrawal is unusable.",
+								},
+							},
+							required: ["paper_id", "reason"],
+						},
+						description: "Papers to withdraw.",
+					},
+					note: {
+						type: "string",
+						description:
+							"A note about the pool as a whole: what it covers, what it is still missing. Replaces the previous note.",
+					},
+				},
+			},
+			async execute(toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const agentId = context.extension?.host?.agentId;
+				if (agentId === undefined) {
+					throw new Error("update_answer_pool needs to know which agent it is recording for; the host reported none.");
+				}
+				const input = readParams<{
+					add?: { paper_id?: unknown; why?: unknown }[];
+					remove?: { paper_id?: unknown; reason?: unknown }[];
+					note?: unknown;
+				}>(params);
+				const additions = Array.isArray(input.add) ? input.add : [];
+				const removals = Array.isArray(input.remove) ? input.remove : [];
+				const note = typeof input.note === "string" ? input.note.trim() : "";
+				if (additions.length === 0 && removals.length === 0 && note === "") {
+					throw new Error(
+						"update_answer_pool needs at least one of `add`, `remove` or `note`. " +
+							"To read the pool back without changing it, pass a `note` restating what you believe it covers.",
+					);
+				}
+
+				const pool = poolFor(agentId);
+				const client = clientFromEnv();
+				const lines: string[] = [];
+
+				for (const removal of removals) {
+					const identifier = typeof removal?.paper_id === "string" ? removal.paper_id.trim() : "";
+					const reason = typeof removal?.reason === "string" ? removal.reason.trim() : "";
+					if (identifier === "" || reason === "") {
+						lines.push(`  ! withdrawal skipped: both paper_id and reason are required (got '${identifier}').`);
+						continue;
+					}
+					const result = pool.remove(identifier, reason, toolCallId);
+					lines.push(
+						result.outcome === "removed"
+							? `  - withdrawn ${result.canonicalId}: ${reason}`
+							: `  ! '${identifier}' is not in the pool, so there was nothing to withdraw.`,
+					);
+				}
+
+				for (const addition of additions) {
+					const identifier = typeof addition?.paper_id === "string" ? addition.paper_id.trim() : "";
+					const why = typeof addition?.why === "string" ? addition.why.trim() : "";
+					if (identifier === "" || why === "") {
+						lines.push(`  ! addition skipped: both paper_id and why are required (got '${identifier}').`);
+						continue;
+					}
+					// Resolved through the service, which is the only holder of the
+					// identity rule and which returns the bibliographic fields the entry
+					// needs anyway - so the extra call is not extra work (D-13).
+					let looked: Awaited<ReturnType<ServiceClient["getPaper"]>> | undefined;
+					try {
+						looked = await client.getPaper(identifier, { signal: context.signal ?? undefined });
+					} catch (error) {
+						if (!(error instanceof ServiceRequestError)) throw error;
+						// A paper the service cannot resolve is still the agent's answer;
+						// refusing it would lose a real result over a thin record. It goes in
+						// under the identifier as given, and the record says so.
+						lines.push(
+							`  ~ ${identifier} could not be resolved by the service (${error.detail ?? error.message}); ` +
+								"committed under the identifier as given, without normalised identity.",
+						);
+					}
+					const paper = looked?.paper;
+					const result = pool.add(
+						paper === undefined
+							? { canonicalId: null, paperId: identifier }
+							: {
+									canonicalId: paper.canonicalId,
+									paperId: identifier,
+									arxivId: paper.arxivId,
+									doi: paper.doi,
+									openalexId: paper.openalexId,
+									title: paper.title,
+									authors: paper.authors,
+									year: paper.year,
+									venue: paper.venue,
+									url: paper.url,
+								},
+						why,
+						toolCallId,
+					);
+					lines.push(
+						result.outcome === "added"
+							? `  + ${result.entry.canonicalId} :: ${result.entry.title || "(no title)"}`
+							: `  = ${result.entry.canonicalId} was already committed; its 'why' is updated.`,
+					);
+				}
+
+				if (note !== "") pool.setNote(note);
+
+				const snapshot = pool.snapshot();
+				// `process.cwd()`, matching `writeTrace`: the pool and the trace must land
+				// in one directory or the scorer finds half of an episode.
+				const path = await writeAnswerPool(snapshot, process.cwd());
+				if (path === undefined) {
+					throw new Error(
+						"The answer pool could not be written to disk. The evaluation reads that file, so the change " +
+							"you just made would not be part of your answer. Check the trace directory is writable.",
+					);
+				}
+
+				const text = [renderPoolSummary(snapshot), ...(lines.length > 0 ? ["", "this call:", ...lines] : [])].join("\n");
+				return {
+					content: [{ type: "text", text: truncate(text, MAX_OUTPUT_CHARS) }],
+					// `pool` in the details is what the trajectory harvests, which is how a
+					// Reviewer sees the pool's current content without a tool of its own.
+					details: { baseUrl: client.baseUrl, pool: snapshot, path },
+				};
 			},
 		});
 

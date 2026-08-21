@@ -23,7 +23,14 @@ from search_service.exceptions import SourceError
 from search_service.identifiers import ACCEPTED_ID_FORMS, parse_identifier
 from search_service.plugin_loader import PluginRegistry
 from search_service.providers.base import SearchProvider
-from search_service.schemas import ExpandRequest, ExpandResponse, Failure, Paper, search_result_item_to_paper
+from search_service.schemas import (
+    ExpandRequest,
+    ExpandResponse,
+    Failure,
+    Paper,
+    canonical_key,
+    search_result_item_to_paper,
+)
 from search_service.schemas.paper import CitationEdge
 
 router = APIRouter(tags=["expand"])
@@ -51,7 +58,8 @@ def _capable_providers(registry: PluginRegistry, capability: str) -> list[Search
 
 
 def _paper_key(paper: Paper) -> str:
-    return paper.doi or paper.arxiv_id or paper.openalex_id or paper.paper_id
+    # Same identity rule as the aggregator and the answer pool; see `canonical_key`.
+    return canonical_key(paper)
 
 
 @router.post("/expand/citations", response_model=ExpandResponse)

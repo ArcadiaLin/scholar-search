@@ -24,6 +24,7 @@ from search_service.schemas.paper import (
     FieldProvenance,
     Paper,
     RankedPaper,
+    canonical_key,
     merge_papers,
     search_result_item_to_paper,
 )
@@ -90,6 +91,7 @@ __all__ = [
     "SearchRequest",
     "SearchResponse",
     "SearchState",
+    "canonical_key",
     "merge_papers",
     "search_result_item_to_paper",
 ]

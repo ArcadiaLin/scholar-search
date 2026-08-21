@@ -38,7 +38,9 @@ ACCEPTED_ID_FORMS = (
     "or an arXiv id (2101.00001, arXiv:2101.00001v2 or https://arxiv.org/abs/2101.00001)"
 )
 
-_OPENALEX_RE = re.compile(r"^(?:https?://openalex\.org/)?(W\d+)$", re.IGNORECASE)
+# The `openalex:` prefix is accepted because `canonical_key` emits it: a canonical
+# id is handed back to the tools as a seed, so it has to parse.
+_OPENALEX_RE = re.compile(r"^(?:openalex:|https?://openalex\.org/)?(W\d+)$", re.IGNORECASE)
 _DOI_PREFIX_RE = re.compile(r"^(?:doi:|https?://(?:dx\.)?doi\.org/)", re.IGNORECASE)
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
 _ARXIV_PREFIX_RE = re.compile(r"^(?:arxiv:|https?://arxiv\.org/(?:abs|pdf)/)", re.IGNORECASE)

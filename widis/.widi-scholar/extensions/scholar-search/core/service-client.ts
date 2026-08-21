@@ -145,6 +145,14 @@ export interface ProviderRecord {
  */
 export interface PaperSummary {
 	readonly paperId: string;
+	/**
+	 * The service's identity for this work, normalized across id spaces.
+	 *
+	 * Carried rather than recomputed: identity is a domain algorithm and it has
+	 * exactly one definition, in the service (`docs/develop/decisions.md` D-13).
+	 * `null` only when the service did not report one.
+	 */
+	readonly canonicalId: string | null;
 	readonly title: string;
 	readonly authors: readonly string[];
 	readonly authorCount: number;
@@ -633,6 +641,7 @@ function parsePaperSummary(value: unknown, url: string, maxAuthors: number, maxA
 	const abstract = nullableString(value.abstract);
 	return {
 		paperId,
+		canonicalId: nullableString(value.canonical_id),
 		title,
 		authors: authors.names,
 		authorCount: authors.total,
@@ -697,7 +706,7 @@ function toWirePaper(candidate: Readonly<Record<string, unknown>>): Record<strin
 		}
 		// Fields the summary derived and the service does not model are dropped
 		// rather than sent: an unknown key would fail validation for the whole record.
-		if (key === "authorCount" || key === "rank" || key === "tier") continue;
+		if (key === "authorCount" || key === "rank" || key === "tier" || key === "canonicalId") continue;
 		mapped[rename[key] ?? key] = value;
 	}
 	// The service requires a `paper_id`. A record that named only a DOI or an

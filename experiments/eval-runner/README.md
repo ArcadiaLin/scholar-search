@@ -34,6 +34,45 @@ node experiments/eval-runner/run.mjs \
 输出写到 `--out` 目录的 `run.json`。`runs/` 在 `.gitignore` 里——
 运行产物按 `AGENTS.md` §5.2 不入 Git。
 
+## 打分（S10）
+
+三个脚本串成一条回路：`autoscholarquery.mjs` 造输入 → `run.mjs` 跑 →
+`score.mjs` 出数字。
+
+```bash
+# 1. AutoScholarQuery -> queries 文件（带 gold 与时间边界）
+node experiments/eval-runner/autoscholarquery.mjs \
+  --split train --limit 20 --out runs/eval/train-20/queries.json
+
+# 2. 跑（答案池与轨迹落到 --out 下的 trajectories/）
+node experiments/eval-runner/run.mjs \
+  --queries runs/eval/train-20/queries.json \
+  --model vllm/qwen3.6-35b-a3b --out runs/eval/train-20
+
+# 3. 打分
+node experiments/eval-runner/score.mjs --run runs/eval/train-20/run.json --k 20
+```
+
+**打分只读答案池**（`<agentId>.answer.json`），不读 agent 的散文。
+从散文里正则抠 arXiv ID 是一个会静默劣化的仪器——agent 写"MetaBox+ 我没找到"，
+正则照样算命中（`docs/develop/plan.md` §3.5）。同一个理由让池子成为硬要求：
+池子为空的 episode 得 0 分并**留在分母里**。
+
+`--k` 按 agent 写入池子的顺序截断，那是它自己给出的排序；换任何别的顺序，
+打的就是一个没人产出过的排名。
+
+报告 Recall@k / Precision@k / F1 / 中位延迟，以及两张分类表：
+`byPoolStatus`（`ok` / `empty` / `never-written` / `unreadable`——同样是 0 分，
+但"没调过这个工具"和"调了没提交"是两种不同的诊断）与 `byTermination`。
+不只报 Recall：官方权重是 F1 70% / 效率 20% / 结构化 10%（`AGENTS.md` §5.3）。
+
+**数据集不在仓库里。** `references/datasets/` 在 `.gitignore` 里，且上游
+`CarlanLark/pasa-dataset` 是 gated HF 仓库，要凭据才能取。
+`autoscholarquery.mjs` 也接受 `--input <任意 jsonl>`，格式相同即可。
+
+`--trace-dir` 覆盖池子与轨迹的落点（经 `SCHOLAR_TRACE_DIR` 传给 extension）。
+默认是 `<out>/trajectories`，这样两次 run 的答案不会互相顶掉。
+
 ## 记录了什么
 
 **Provenance**（`AGENTS.md` §5.3 要求的每一项，全部来自 RPC）：
@@ -43,7 +82,8 @@ profile（id/label/来源）、model（provider/id/baseUrl）、thinking level�
 生效预算（经 `get_budget` 工具取得，因为边界在 Search Service 的配置里，
 runtime 看不到）、启动诊断、父仓库 revision 与 dirty 标志。
 
-**每条查询**：稳定关联 `id`、独立的 `terminationStatus`（`completed` / `timeout` /
+**每条查询**：稳定关联 `id`、`agentId`（打分器靠它找到这条查询的答案池）、
+`gold`（原样带过来，免得打分要同时对齐两个文件）、独立的 `terminationStatus`（`completed` / `timeout` /
 错误码——与 `ok` 分开，因为超时和被拒都是"没有答案"，折叠在一起就没有失败分类了）、
 `elapsedMs`、答案文本（只取 text part，推理内容不混入）、token usage。
 **失败的查询留在记录里进分母**，不静默剔除。
