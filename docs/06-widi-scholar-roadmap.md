@@ -441,10 +441,13 @@ extension 版本与生效预算。
 
 ### S10 起
 
-S0–S9 是**已经执行完**的一个单元。后续 stage 的定义在
-**`docs/09-next-stages.md`**：S10（结构化答案池与召回评测回路）、
-S11（$NP_k^{judge}$ 载体与 L3b 判别层），以及它们之前必须先修的
-`08-retrieval-defects.md` F-1。
+S0–S9 是**已经执行完**的一个单元。后续 stage 的定义分在两处：
+
+- **`docs/09-next-stages.md`**：S10（结构化答案池与召回评测回路）、
+  S12（$NP_k^{judge}$ 载体与 L3b 判别层）
+- **`docs/10-reviewer-v0.md`**：S11（Reviewer v0 与 $NP_0$ 重写）
+
+以及它们之前必须先修的 `08-retrieval-defects.md` F-1、F-2、F-10。
 
 另起一篇而不是在这里追加，是因为那两个 stage 各自涉及一个需要论证的架构选择，
 理由比 stage 条目本身长，塞进上面这个格式会把论证挤掉。

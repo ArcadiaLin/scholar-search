@@ -461,6 +461,94 @@ Service 侧要用 LLM 的地方不止判别器——还有 L3a 的 cross-encoder
 
 ---
 
+## F-10 — `expand_citations` 不接受其他工具产出的 id（未修）
+
+**现象**：2026-08-21 的 `search-k9u1` 会话里，两次 `expand_citations` 都因为
+种子 id 格式失败，agent 随后**放弃了引文扩展这条路**。
+
+**证据**：
+
+```
+forward expansion from 1 seed(s): 0 paper(s) reached over 0 edge(s), 1 provider call(s).
+failures (1):
+  - openalex [http] seed 'https://doi.org/10.1007/978-3-642-15555-0_26':
+    OpenAlex client error 400: {"error":"Invalid query parameters error.",
+    "message":"'https://doi.org/10.1007/978-3-642-15555-0_26' is not a valid OpenAlex ID."}
+```
+
+第二次调用部分成功（`W1542723449` 可用，29 篇 / 30 条边），但 depth-2 展开时
+再次撞上同样的墙，7 个种子里 7 个是 DOI URL，全挂。
+
+**根因**：**id 空间在工具之间不一致。**
+`search_metadata` 经 OpenAlex 返回的论文，`paper_id` 就是 `https://doi.org/...`；
+`get_paper` 也**确实能**解析这种 id（会话里成功了十几次）。
+于是 agent 完全合理地假设这种 id 到处都能用——而 `expand_citations`
+把它原样透给 OpenAlex 的 id 端点，400。
+
+**后果**：这不是一次孤立的失败，它**改变了 agent 的策略**。
+第一次失败后 agent 写下"引文扩展因为ID格式问题失败了"，
+之后整段 diffusion 检索（约 35 次调用）**再没用过 `expand_citations`**，
+全靠关键词穷举。而它自己对 1/5 召回的归因恰恰是
+"我过度依赖关键词检索，而没有通过引文扩展从已知论文回溯"——
+**工具坏掉的方式，正好塞住了它自己诊断出来的那条出路。**
+
+E 轴（引文扩展）在当前实现下没有测量对象。
+
+**补上它需要**：
+
+1. Service 侧统一 id 归一：DOI URL / 裸 DOI / `W\d+` / arXiv id 都应先经
+   同一个解析器变成规范 id，再进各端点。`get_paper` 已经有这个能力，
+   `expand_citations` 应该复用它而不是各写一份；
+2. 无法解析的种子要以 `[bad_id]` 这个分类返回并**说明接受哪些形式**，
+   而不是伪装成"这个方向没有边"——现在的兜底文案
+   "Either the seeds have no edges in this direction, or no source could serve them"
+   把一个可修的输入错误说成了数据缺失；
+3. 回归测试：拿 `search_metadata` 的输出直接喂给 `expand_citations`，
+   断言不出现 `[http] ... is not a valid OpenAlex ID`。
+   **工具 A 的输出必须是工具 B 的合法输入**，这条该成为工具集的通用契约。
+
+## F-11 — OpenAlex 的 ML 预印本引文图很稀疏，backward 扩展基本不可用（未修，是数据现实）
+
+**现象**：即使修好 F-10，`direction=backward` 在本项目的语料上依然大面积无效。
+
+**证据**（2026-08-21 实测，带 key 直连，抽样 8 篇 gold）：
+
+| arXiv id | `referenced_works` | `cited_by_count` | 标题 |
+| --- | --- | --- | --- |
+| 2010.02502 | 40 | 102 | Denoising Diffusion Implicit Models |
+| 2303.01469 | **0** | 26 | Consistency Models |
+| 2112.07068 | **0** | 7 | Score-Based … Critically-Damped Langevin |
+| 2112.07804 | **0** | 145 | Denoising Diffusion GANs |
+| 1810.09726 | 55 | 25 | CEREALS |
+| 1911.11789 | **无记录** | — | ViewAL |
+| 2010.01884 | **0** | 1 | MetaBox+ |
+| 2002.06583 | 51 | 24 | Reinforced active learning |
+
+八篇里 **四篇 `referenced_works` 为空、一篇根本没有记录**。
+`cited_by_count` 同样严重偏低——DDIM 的真实被引在数千量级，OpenAlex 只记了 102。
+
+**后果**：
+
+- **backward 扩展**从新近预印本出发时大概率返回空，而"从找到的论文回溯参考文献"
+  正是 `prototype.md` E 轴与 `05-skill-decomposition.md` CF-B 整个 Phase 2 的基础；
+- **forward 扩展相对可用**（`cited_by` 至少存在），所以这个语料上正确的策略是
+  **从老的奠基工作向前扩展**，而不是从新论文向后回溯——这与 CF-B 的默认假设相反；
+- 任何以 `citation_count` 为排序特征的做法（`prototype.md` §3 的 L1 特征、
+  CF-B-05 的 "cc >5000 判 C" 判据）在这个数据上**阈值全部失准**。
+  CF-B-05 那条准则如果照搬，会把所有论文都判成非通用工具类。
+
+**补上它需要**：这不是一个能"修"的缺陷，是数据源的能力边界。可选的应对：
+
+1. 把它写进 provider 能力表（`CAP`）——`graph_references` 当前在
+   `config.yaml` 里被声明为 `true`，而实测它对预印本大面积失效。
+   `05-skill-decomposition.md` §2 对 `CAP` 的判据是"关于数据源的**可证伪断言**，
+   应被实测推翻"——这就是一次推翻，能力表该改；
+2. E 轴实验默认用 forward 而非 backward，并把这个选择的理由记进 `experiments.md`；
+3. 若要真正做引文扩展，需要引入有 ML 预印本引文图的源
+   （Semantic Scholar / OpenCitations），这是新 provider，不在当前范围。
+
+---
+
 ## 会话中的 Agent 行为观察
 
 这一节记的不是代码缺陷，而是**这次会话暴露出的 agent 行为特征**。
@@ -510,6 +598,8 @@ Service 侧要用 LLM 的地方不止判别器——还有 L3a 的 cross-encoder
 | F-3 / F-4 | 扩展 G-5（$\theta^S_k$ 未参数化）到预算维度，并给出具体数字 |
 | F-8 | **新，且已修**。此前所有 stage 的验收都跑得通，因为匿名调用在配额未耗尽时正常返回——静默降级不会让任何一条判据变红 |
 | F-9 | **新，未修**。潜伏缺陷，随 `aac617c` 的 LLM provider 层引入；与 F-8 同族 |
+| F-10 | **新，未修**。S7 验的是九个工具各自可调用，没有验"工具 A 的输出是工具 B 的合法输入" |
+| F-11 | **新，不可修**。是 provider 能力表的可证伪断言被实测推翻，E 轴的默认方向要改 |
 | F-5 | 与 G-4 相关；新增的是评测协议侧的时间窗映射 |
 | F-6 | 是 G-3（`intent` 无作用面）与 G-5 的量化后果，非新缺口 |
 | B-5 | 为 G-1 提供了一个真实案例 |

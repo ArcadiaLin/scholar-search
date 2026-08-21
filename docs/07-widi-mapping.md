@@ -25,7 +25,7 @@
 | Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地（G-2） |
 | $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地 |
 | Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S8 通道已通；介入时机偏在 episode 之后（G-1） |
-| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `09-next-stages.md` S11 |
+| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `09-next-stages.md` S12 |
 | Service 侧 LLM worker | `llm/` provider 抽象 + `POST /judge` | `src/search-service/src/search_service/llm/` | 传输层已落地（`aac617c`）；判别策略层未落地 |
 | $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | 无载体 | 未落地，见 `09-next-stages.md` S10 |
 
@@ -262,7 +262,7 @@ B 完全属于 Service，采样参数也完全由我们掌握——因为那是�
 经 `POST /judge` 转发，默认 provider 是局域网 vllm。
 但它**只是传输层**：`api/judge.py` 的 docstring 明确写了不含 prompt 模板与结果解析。
 判别策略层、$NP_k^{\mathrm{judge}}$ 载体与 L3b 接入排序栈都还没有，
-见 `docs/09-next-stages.md` 的 S11。
+见 `docs/09-next-stages.md` 的 S12。
 
 A 仍然卡在 U-03，需要用户授权才能动 vendored 的 `packages/agent`。
 
