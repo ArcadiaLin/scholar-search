@@ -13,7 +13,7 @@
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
-| S5 | $NP_0^{agent}$ 条目化 | BLOCKED | `9bec91a` | 30 条条目已落地；验收（全关 vs 全开轨迹形状）测不出——轮内方差比组间差异大，见 S5 日志 |
+| S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `PENDING_S5FIX` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | TODO | | |
 | S8 | Reviewer 通道 | TODO | | |
@@ -543,6 +543,91 @@ Find me the closely related literature. Nothing published after 2024-06-30."
   Reviewer 需要能区分这两者。
 
 - commit: `bb6773c`
+### 2026-08-21 — S5 验收补做（固定采样后通过）
+
+用户选择"固定采样再重测"。做完了，**验收通过**。下面是过程与两条重要的修正。
+
+#### WIDI 没有采样旋钮（先说清这个，它决定了做法）
+
+想按用户的意思在配置里固定采样，结果**做不到**：
+
+- `settings.json` 没有 temperature/seed 键（`setting-manager.ts` 里 grep 无结果）；
+- `models.json` 的 `ModelDefinitionSchema` / `ModelOverrideSchema` / `ProviderConfigSchema`
+  都没有采样字段，`compat` 三个 schema 也没有 `extraBody` 之类的透传口；
+- extension 侧唯一能改请求的 `before_provider_request` 拦截器，
+  它的 `AgentHarnessStreamOptionsPatch` 只有 transport / timeoutMs / maxRetries /
+  maxRetryDelayMs / headers / metadata / cacheRetention——**没有 temperature**；
+- 能改原始 payload 的 `before_provider_payload` **不在** `ExtensionInterceptorName`
+  的六个可用拦截器里。
+
+要正经接通就得改 `packages/widi/packages/agent/`（往
+`AgentHarnessStreamOptions` 加字段并在 harness 里转发），
+而那是 vendored 的 Pi fork，submodule 自己的 `AGENTS.md` 写明
+"Do not modify it unless the user explicitly asks"。所以没动。
+
+**改用一个实验专用的本地 shim**：scratchpad 里一个反向代理，
+把 vllm 的 OpenAI 兼容请求原样转发，只在 `/chat/completions` 的 body 里
+强制写入采样参数；再把 `models.json` 的 vllm `baseUrl` **临时**指向它，
+跑完恢复（已恢复，`git status` 干净）。
+shim 不提交——它是实验器材，不是产物，与 D-01 里 RPC 冒烟脚本同一类处置。
+
+#### 修正一：temperature=0 是错的
+
+第一次按 `temperature: 0` 跑，结果这个推理模型退化成重复循环：
+25 次调用里 13 次失败，`durationMs: 540350` 正好撞上 540 秒的 prompt deadline。
+贪心解码对 thinking 模型有害（Qwen 自己也建议 thinking 模式用 ~0.6）。
+
+改成 **temperature 0.6 + top_p 0.95 + 固定 seed 12345**——
+确定性来自 seed，不是来自把温度压到 0。
+直接验证：同一个创造性提问连跑两次，输出逐字相同
+（`"The lighthouse's beam wasn't light, but a physical rope that tethered the drifting stars..."`），
+且 reasoning 尾部也相同。
+
+#### 修正二：判据不能用调用总数，要用调用构成
+
+固定采样后重测，同一查询（还是 diffusion/conformer 那条）各 3 轮：
+
+| 组 | 调用总数 | turns | provider_query | 失败调用 | get_paper | search_metadata |
+| --- | --- | --- | --- | --- | --- | --- |
+| 全开 A | 29 | 20 | **0** | **0** | 15 | 13 |
+| 全开 B | 29 | 13 | **0** | **0** | 18 | 10 |
+| 全开 C | 21 | 17 | **0** | **0** | 7 | 13 |
+| 全关 A | 21 | 19 | **3** | 0 | 4 | 13 |
+| 全关 B | 32 | 25 | **2** | 1 | 13 | 16 |
+| 全关 C | 44 | 45 | **3** | 3 | **0** | **40** |
+
+**调用总数依然重叠**（全开 21–29，全关 21–44），
+这印证了之前的判断：总数是个钝指标，不该当判据。
+
+**构成则完全分开**：
+
+- `provider_query`：全开 **0 / 0 / 0**，全关 **3 / 2 / 3**。三比三完全分离。
+- 失败调用：全开 **0 / 0 / 0**，全关 0 / 1 / 3。
+- `get_paper`：全开最少也有 7，全关有一轮是 **0**——
+  全关 C 那一轮打了 40 次 `search_metadata`、一篇都没去核实，
+  一路跑到 540 秒 deadline 才停。那正是
+  `diagnose-before-act` / `growth-is-not-success` / `budget-priority`
+  这几条要防的退化形态：只管继续搜，不管搜到的东西。
+
+所以"轨迹形状明显不同"成立，条件是两件事同时做到：
+**采样固定**，且**观察量取调用构成而不是调用总数**。
+
+#### 仍要如实标注的三点
+
+1. **n=3/组**。`provider_query` 那一列是 3:3 完全分离，但样本仍小。
+2. **固定 seed 不等于轨迹确定**。全开 A 与 B 的调用总数都是 29，
+   但构成不同（15/13 vs 18/10）、turns 不同（20 vs 13）。
+   原因是工具打的是真实 OpenAlex/arXiv：一旦某次工具返回的字节不同，
+   后续上下文就分叉，固定 seed 只保证"同样上下文下生成相同"。
+   用户在选项里预判的风险（"若方差主要来自工具返回的真实数据波动，压不下来"）
+   **部分成立**——压下来了大部分，但没有全压下来。
+3. **复现需要 shim**。shim 不在仓库里。要复现这张表，
+   得先起一个强制写入采样参数的反向代理，再把 vllm 的 `baseUrl` 临时指过去。
+   要让它变成仓库里可复现的能力，只有一条路：给 WIDI 接通采样参数
+   （见上，需要用户明确授权改 vendored 的 Pi fork）。这条记在下方 U-03。
+
+- commit: `PENDING_S5FIX`
+
 
 
 
@@ -801,6 +886,43 @@ cd packages/widi && git push origin HEAD:<branch>
 `git checkout --` 还原，`git status` 现在只剩我改的 2 个文件。
 **后续 stage 不要在 submodule 里跑 `npm run check`**，改用
 `npx biome check`（不带 `--write`）加 `npx tsgo --noEmit -p tsconfig.json`。
+
+### U-03 — WIDI 无法固定采样参数，可复现运行因此不可得（已知，未修，需用户授权）
+
+**症状**：无法让同一个 prompt 在 WIDI 里可复现地生成。没有任何配置面能设置
+temperature / top_p / seed。
+
+**逐处确认**（S5 验收时做的）：
+
+| 位置 | 结论 |
+| --- | --- |
+| `settings.json` / `setting-manager.ts` | 无 temperature/seed 键 |
+| `models.json` 的 `ModelDefinitionSchema`、`ModelOverrideSchema`、`ProviderConfigSchema` | 无采样字段 |
+| `compat` 三个 schema（openai-completions / openai-responses / anthropic-messages） | 无 `extraBody` 之类透传口 |
+| extension 拦截器 `before_provider_request` | 它的 `AgentHarnessStreamOptionsPatch` 只有 transport / timeoutMs / maxRetries / maxRetryDelayMs / headers / metadata / cacheRetention |
+| extension 拦截器 `before_provider_payload` | **不在** `ExtensionInterceptorName` 的六个可用拦截器里 |
+| `agent-orchestrator.ts:1182` | 只传 `request.settings.providerRetry`，即上面那个不含 temperature 的结构 |
+
+`SimpleStreamOptions`（pi-ai）本身**有** `temperature`——
+`packages/agent/src/proxy.ts` 就在转发它。缺的只是从 WIDI 配置到
+`AgentHarnessStreamOptions` 这一段。
+
+**为什么没修**：正经接通要往
+`packages/widi/packages/agent/src/harness/types.ts` 的 `AgentHarnessStreamOptions`
+加字段并在 harness 里转发。那是 vendored 的 Pi fork，
+submodule 的 `AGENTS.md` 明确写 "Treat `packages/agent` as vendored upstream code...
+Do not modify it unless the user explicitly asks"。**用户没有明确要求改它**，
+所以停在这里。这与 U-01 不同：U-01 改的是 `apps/widi/`（WIDI 自己的代码），
+U-03 要改的是 vendored 上游。
+
+**对 WIDI 的通用价值是明确的**：WIDI 有 RPC 评测模式（S9 要用），
+而无法固定采样的评测harness 是没法做可复现评测的。
+这符合 §1.1 第一种情况（extension API 无法表达，且对 WIDI 本身有通用价值），
+只是被 submodule 的 vendored 边界挡住了。
+
+**当前绕法**（S5 用的）：scratchpad 里一个反向代理，转发 vllm 请求时强制写入
+采样参数，再把 `models.json` 的 `baseUrl` 临时指过去。
+够做一次实验，但**不进仓库**，所以 S5 那张对照表现在无法在仓库内一键复现。
 
 ### U-02 — profile id 的 filename 派生同样只认 `/`（已知，未修）
 
