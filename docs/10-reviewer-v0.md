@@ -1,6 +1,6 @@
 # Reviewer v0 与 $NP_0$ 重写：从三次真实会话推出来的设计
 
-> 状态：设计，尚未执行。stage 定义在 §6（S11）
+> 状态：设计，尚未执行。stage 定义在 §6（S11），三个关键决策在 §7
 > 读者：要实现 Reviewer 第一版、或要写 $NP_0^{agent}$ 条目的人
 > 前置：`design.md` §5.2（四个 checkpoint）、`prototype.md` §7.2（Reviewer 工具集）、
 > `08-retrieval-defects.md`（F-1..F-11 与行为观察 B-1..B-5）、`09-next-stages.md`（S10）
@@ -227,12 +227,89 @@ R4 对应 F-10 的后果；R5 对应 d9w6 里 OpenAlex 全挂却继续盲试的�
 （`DEFAULT_MAX_PER_EPISODE = 6`、`DEFAULT_MAX_PER_ACTION = 2`、
 novelty key 去重）过滤。检测器不绕过 gate。
 
+### 5.2b Reviewer 是常驻的，在启动时就起来
+
+**决策 D-10。** Reviewer 不再"每次 checkpoint spawn 一个"，而是在
+`npm run widi:scholar` 启动时随 search agent 一起起来，episode 全程存活。
+
+理由有三条，第三条是决定性的：
+
+1. **省掉每个 checkpoint 的 spawn 开销**。改成 `tool_execution_end` 触发后，
+   一个 episode 内可能有六次介入，六次冷启动不可接受。
+2. **用户可以直接跟它对话**。TUI 有 agent strip（`views/agent-strip.ts`，
+   左右键在 agent 间移动），主视图停在 search，需要时切过去问 Reviewer
+   "你为什么没提这一条"。**这正是 §3 那张表的用途**——
+   人工 review 动作是 $NP_0$ 的种子来源，而现在人只能对着 Main 说话。
+3. **常驻更贴合形式化，不是妥协**。`design.md` 写的是 $C^R_t$——
+   **带 $t$ 下标**。Reviewer 的上下文本来就是随 $t$ 演化的，
+   "每次新起一个无记忆的 Reviewer"反而是对形式化的削弱。
+   一个记得"我上一个 checkpoint 已经提过多样性"的 Reviewer，
+   比一个每次从零开始、靠 gate 的 novelty key 去重的 Reviewer 更接近设计意图。
+
+**三条机械约束**（核过 WIDI 的 orchestrator 契约，不要在实现时才发现）：
+
+- **Reviewer 是 search 的子 agent，不是并列的第二个 main agent。**
+  `apps/widi/docs/extensions.md` §"向模型发送文本"写明
+  "`spawnAgent` 只会创建当前 agent 的子 agent"。这不影响任何设计属性——
+  父子关系是**会话目录嵌套**（持久化事实），不是上下文共享；
+  $C^R_t \neq C^M_t$ 照样成立，agent strip 里显示为一棵树，用户照样能切过去。
+- **`prompt` 要求目标空闲，忙时拒绝而不排队。** 如果 Main 连续两次更新答案池，
+  第二次投递会被拒。必须在 extension 侧排队或跳过，并把跳过记进 gate 的拒绝日志——
+  一条被静默丢掉的 review 触发，和一次从未发生的触发长得一模一样。
+- **Reviewer 的生命周期 = Main 的 episode，不是 session。**
+  TUI 里一个 session 通常就是一个 episode，两者重合；但 eval runner
+  **每条查询 spawn 新 Main**（`run.mjs` 的注释写明理由：共享上下文会让
+  查询 N 看到查询 N-1）。Reviewer 若跨查询存活，就会把这条隔离破坏掉。
+  实现上：Reviewer 跟着它所审查的 Main 一起 spawn、一起 dispose。
+
+### 5.2c Reviewer 拿细节靠"拉轨迹"，不是"读 Main 的上下文"
+
+**这是本文最硬的一条边界，单独成节。**
+
+常驻 Reviewer 会自然产生一个需求：它想看得比摘要更细——
+某次检索到底返回了什么、池子里那八篇的摘要各自在说什么。
+**这个需求是合理的，但满足它的方式只有一种。**
+
+- ✅ **拉取式工具，作用域限定在轨迹内。** `inspect_evidence` 已经是这个形态，
+  它的描述里就写着 "limited to the trace - it cannot fetch anything the search
+  did not already find"。要更多细节，就**扩宽 $\bar{\tau}_t$ 的白名单**，
+  并把这次扩宽显式记录下来。
+- ❌ **任何读取 Main 上下文的工具。** 这会一次性摧毁三样东西：
+  S6 逐片段查证的 `leaks 0`、$C^R_t \neq C^M_t$ 这条硬机制，
+  以及"建议可归因于可观察轨迹"这个前提。更远一点的后果是：
+  由这种建议学到的偏好会把 Main 的推理编码进 $PH_k$，
+  而 $PH_k$ 是要跨 episode 复用的——那就成了污染。
+
+**判据不是"给多少细节"，而是"这条信息从过滤器的哪一侧来"**：
+
+| 来源 | 归属 |
+| --- | --- |
+| Main 发出的工具调用入参 | 公开，可给 |
+| 工具返回的结果 | 公开，可给 |
+| Service 产出的 `SearchState` / `Provenance` | 公开，可给 |
+| 答案池的内容（S10） | 公开，可给 |
+| Main 的 thinking block、未落成工具调用的推理 | **私有，永不可给** |
+
+细节可以任意多，只要它是**工具的输入输出**而不是**Main 的想法**。
+按这条判据，v0 需要扩宽的白名单只有一处：`TraceEvidence` 现在只有
+`paperId / title / sources / foundBy`，Reviewer 判断覆盖缺口需要**摘要或主题**。
+这一处扩宽走 `core/trajectory.ts` 的 `COLLECTED_EVENTS` 白名单，
+记成决策，不要顺手加。
+
 ### 5.3 触发时机
 
 这是 G-1 的正面修法。当前 review 挂在 `agent_idle` 上、
 `MAX_REVIEWS_PER_AGENT = 1`，即 $A_t$ 里的 $t$ 恒等于 $T+1$。
 
-v0 改为挂在 `tool_execution_end` 上，检测器在每次工具调用结束后重跑，
+v0 有**两个触发源，取并集**：
+
+**触发源一：答案池更新（决策 D-11）。** Main 每次调用 `update_answer_pool`，
+extension 就向常驻 Reviewer 投递一次当前轨迹。这是个语义上很干净的
+checkpoint——"Main 刚刚承诺了一批论文"正对上 `design.md` §5.2 的
+第②与第④个 checkpoint，而且 Reviewer 此时有最具体的东西可看（§5.4）。
+
+**触发源二：七个检测器（§5.2）。** 挂在 `tool_execution_end` 上，
+检测器在每次工具调用结束后重跑，
 条件**从未触发变为触发**的那一刻投递建议。这自然对上 §5.2 的前三个 checkpoint：
 
 - ① 初始召回完成 = 第一次 `search_metadata` 成功返回后；
@@ -242,6 +319,16 @@ v0 改为挂在 `tool_execution_end` 上，检测器在每次工具调用结束�
   agent 首次写入答案池、或 `agent_idle` 之前，见 §5.4。
 
 `MAX_REVIEWS_PER_AGENT` 相应从 1 提到与 gate 的 episode 上限一致（6）。
+
+**为什么必须保留触发源二，而不是只用答案池。** 答案池更新是 Main 的动作，
+如果它是唯一触发源，Main 就**间接控制了介入率**——不写池子就不被审查。
+这会让 $\Delta_{\mathrm{sidecar}}$ 的归因重新变成内生的，
+正是 `07-widi-mapping.md` §3.4 否决 `ask_reviewer` 时担心的那件事。
+检测器是**地板**：不管 Main 写不写池子，R1–R7 到了条件就触发。
+
+（一个相关的可测风险：Main 若学到"写池子会召来 Reviewer"，可能少写或多写。
+这与 `09-next-stages.md` §2.6 第二条是同一类副作用，合并观察即可，
+观察量是"池子首次写入时刻"与"池子写入次数"。）
 
 ### 5.4 与 S10 答案池的关系
 
@@ -264,6 +351,9 @@ R2（查询单调）现在只能看查询词的重叠，这是个弱代理；
   S10 之后若要加 `organize_answer` 再单独论证。
 - **不修改 Main 的工具集**：Reviewer 的建议靠 `precede` 注入下一轮上下文，
   Main 结构上仍然无法向 Reviewer 求助（`07-widi-mapping.md` §3.4）。
+  注意常驻 Reviewer **不改变**这一点：`prompt` 的 `target` 是 extension 在用，
+  不是 Main 在用；Main 的 `tools:` 里依然没有 `spawn_agent` / `send_message`。
+- **不给 Reviewer 任何读取 Main 上下文的工具**：见 §5.2c。
 - **不做建议采纳率的自动统计**：那需要把"Main 是否照做"从轨迹里判出来，
   属于 M 轴的测量工作，不在本 stage。
 
@@ -279,10 +369,13 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
 **落点**：
 
 - `core/review.ts` 新增七个检测器（纯函数，与 gate 同文件同风格）
-- `index.ts` 的 review 触发从 `agent_idle` 移到 `tool_execution_end`，
-  `MAX_REVIEWS_PER_AGENT` 提到 6
+- `index.ts`：Reviewer 改为在 `agent_spawned` observer 里起、episode 全程常驻
+  （§5.2b），review 触发从 `agent_idle` 移到 `tool_execution_end` 与
+  `update_answer_pool` 两处，`MAX_REVIEWS_PER_AGENT` 提到 6
+- `core/trajectory.ts`：`TraceEvidence` 增加摘要/主题字段（§5.2c 的唯一一处白名单扩宽）
 - `renderTraceForReviewer` 增加 `DETECTED CONDITIONS` 段
-- `preference/np-agent.md` 按 §4 重写：每条绑定观察量，阈值拆进 $HP$
+- `config.yaml`：检测器阈值（含 R2 的 Jaccard，先取 0.5）作为 $HP$ 落位
+- `preference/np-agent.md` 按 §4 重写并分成两组（§7 决策 D-12）
 - `preference/README.md` 补写作规程（§3.1 的两条纪律）
 - `scripts/widis-quality.mjs` 增加 §3.1 纪律二的 lint
 
@@ -299,9 +392,11 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
    这是 G-1 的正面判据）；
 3. gate 的拒绝记录里能看到检测器重复触发被 novelty key 挡下的条目
    （说明检测器接在 gate 之内，没有绕过）；
-4. `np-agent.md` 的每条条目都能指出它对应 $\bar{\tau}_t$ 的哪个字段；
-   指不出的条目要么改写，要么删除；
-5. lint 能拦下一条含 arXiv id 的条目。
+4. `np-agent.md` 的**绑定组**每条都能指出它对应 $\bar{\tau}_t$ 的哪个字段，
+   且满足 D-12 的可绑定判据（关掉它轨迹会不同）；
+5. lint 能拦下一条含 arXiv id 的条目；
+6. TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
+   **没有** Main 的私有推理（沿用 S8 的逐片段查证方法，leaks = 0）。
 
 **这些判据不检验什么**：建议的**质量**，以及 Main 是否采纳。
 判据 2 只验"有机会被读到"，不验"读了之后变好了"——
@@ -313,28 +408,65 @@ F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做�
 
 ---
 
-## 7. 尚未决定的问题
+## 7. 三个决策（原"尚未决定的问题"，2026-08-22 定）
 
-按用户的要求把路径写到"不留过多疑问"，但有三处确实还没有答案，
-显式列出，不要在实现时临时拍板：
+### D-10 — Reviewer 常驻，随 search agent 一起启动
 
-**Q1：检测器触发后，Reviewer agent 每次都要重新起吗？**
-现在 `runReview` 每次 spawn 一个新 Reviewer。改成 `tool_execution_end` 触发后，
-一个 episode 内最多 6 次 spawn，代价可能不小。
-备选是复用同一个 Reviewer agent 实例（它有自己的 session，$C^R_t \neq C^M_t$ 仍成立），
-但那样 Reviewer 就有了跨 checkpoint 的记忆——**这是否违反"旁路观察者"的定位，
-需要回到 `design.md` §5.2 确认。** 建议实现时先按"每次新起"做，
-把复用留作一次单独的优化，并测量它对 $\Delta_{\mathrm{sidecar}}$ 的影响。
+见 §5.2b。原先写的是"先按每次新起做"，被推翻了：
+常驻不是性能妥协，而是更贴合 $C^R_t$ 这个**带 $t$ 下标**的记号，
+并且解锁了用户直接与 Reviewer 对话这条通道——而人工 review 动作
+正是 $NP_0$ 的种子来源（§3）。
 
-**Q2：R2 的 Jaccard 阈值取多少？**
-0.5 是本文的占位值，没有依据。它属于 $HP_k$，应当进 `config.yaml` 并可搜索。
-落地时先取一个值跑通，把定值这件事留给 $HP$ 的搜索阶段，
-**不要在代码里写死**。
+三条机械约束（子 agent 而非并列、`prompt` 忙时被拒、生命周期 = episode）
+写在 §5.2b，实现时按那里做。
 
-**Q3：$NP_0$ 重写后，条目数会从 30 条降到多少？**
-§4 的原则会砍掉相当一部分不可观察的条目。
-`05-skill-decomposition.md` §5 结论二估的量级是 25–30 条，
-那是按"能不能写成一条指导"估的，不是按"能不能被观察"估的。
-重写后可能只剩十几条。**这不是损失**——一条无法检查的条目在实验里
-提供的是噪声而不是信号。但它会影响 P 轴的设计（对照组的条目数变了），
-落地时要在 `experiments.md` 里同步。
+### D-11 — 触发源取"答案池更新"与"七个检测器"的并集
+
+见 §5.3。只用答案池会让 Main 间接控制介入率，
+$\Delta_{\mathrm{sidecar}}$ 的归因重新变成内生的。检测器是地板。
+
+### D-12 — $NP_0$ 重写后**分两组**，不追求某个条目数
+
+原先的问法（"会从 30 条降到多少"）本身就问错了：答案不该是一个数字，
+而该是一个划分。
+
+- **绑定组 A**：条目携带 `observable:` 元数据，指明它断言 $\bar{\tau}_t$ 的哪个字段。
+  **P 轴的消融只作用于这一组**，因为只有它的开关能产生可测的差异。
+- **未绑定组 B**：条目保留在文件里，标 `observable: none`，
+  **排除在消融之外**，并各自写清为什么暂时绑不了。
+
+这样处理有四个好处：不丢失 `05-skill-decomposition.md` 追溯到的 CF-* 出处；
+P 轴作用在一个良定义的集合上；B → A 的提升成为一条具体的、可增量推进的工作队列；
+条目数这个问题自然消失。
+
+**可绑定的判据**，一句话：
+
+> 一条条目可绑定，当且仅当**关掉它会让轨迹不同**。
+> 关掉它轨迹一模一样的条目，按构造就是不可观察的。
+
+值得注意的是：**这与 S5 的消融判据是同一条**。
+这也顺带解释了 S5 那次"轨迹形状明显不同"为什么难验——
+如果当时 30 条里多数是不可绑定的，"关掉全部条目轨迹不变"本就是预期结果，
+而不是实现出了问题。
+
+落地时把 A / B 的划分结果同步进 `experiments.md` 的 P 轴定义。
+
+---
+
+## 8. 剩余的实现期风险
+
+不是未决问题，是**已知会在实现时咬人的地方**，按顺序排：
+
+1. **`prompt` 忙时被拒**（§5.2b 第二条）。最可能的表现是：
+   Main 连续两次写池子，第二次 review 静默消失。
+   **必须显式排队或显式记录跳过**，不能让它变成"看起来没触发"。
+2. **常驻 Reviewer 的上下文会涨**。六次 checkpoint 各投递一次完整轨迹，
+   到后期上下文里有六份高度重复的 trace。
+   建议投递**增量**（自上次 checkpoint 以来新增的调用与证据）+ 一份当前汇总，
+   而不是每次重发全量。这不影响 $C^R_t$ 的语义。
+3. **R2 的 Jaccard 阈值 0.5 没有依据**，是跑通用的占位值。
+   它属于 $HP_k$，进 `config.yaml`，**不要写进代码**；
+   定值留给 $HP$ 的搜索阶段。
+4. **白名单扩宽有滑坡风险**。§5.2c 批准的是**一处**扩宽
+   （`TraceEvidence` 加摘要/主题）。之后每一次"Reviewer 还想看点别的"
+   都要回到 §5.2c 那张表判一次来源，不能因为"上次也加了"就顺手加。
