@@ -16,7 +16,7 @@
 | S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
-| S8 | Reviewer 通道 | TODO | | |
+| S8 | Reviewer 通道 | DONE | `PENDING_S8` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
 | S9 | RPC 评测入口 | TODO | | |
 
 状态取值：`TODO` / `IN_PROGRESS` / `DONE` / `BLOCKED`。
@@ -711,6 +711,101 @@ $T^M$ 补齐到九个工具。**照 S2 的形状做**，但 Service 侧五个端
   将来可以更明确地说"用 list_providers 里那个源的 id 空间"。
 
 - commit: `ec7b377`
+### 2026-08-21 — S8
+
+Reviewer 旁路通道跑起来了。
+
+- 落点：
+  - `profiles/reviewer.md`：`tools:` 只有三个在线工具
+    `[provide_advice, inspect_evidence, get_ranking_features]`。
+    **没有任何检索工具**——它不能自己去搜。
+    离线的六个工具**根本没注册**（不是注册了无效），符合 §7.2 第三条。
+  - `settings.json` 的 `enabledProfiles` 追加 `"reviewer"`。
+  - `core/review.ts`：advice gate（纯函数）+ 给 Reviewer 渲染轨迹。
+  - `core/trajectory.ts` 增加 `evidence`（`EvidenceState`，`design.md` §5.1）：
+    S6 只做了 `SearchState`，而 Reviewer 需要**可引用的 id** 才谈得上
+    "evidence 必须真实存在"。只存 id + 标题 + 来源 + 由哪次调用发现，
+    不存摘要（否则轨迹会随语料增长，正是摘要视图要避免的）。
+  - `index.ts`：三个工具 + checkpoint 触发 + gate + 投递。
+
+- **"旁路"是靠工具集保证的，不是靠提示词**：
+  Reviewer 由 **extension** spawn，不是 Main spawn。
+  `profiles/search.md` 的 `tools:` 里既没有 `spawn_agent` 也没有 `send_message`，
+  所以 Main **结构上**无法向 Reviewer 求助。
+  `design.md` §3 要求"Main 不能主动求助"，用一句禁令维持是不牢的，
+  用"工具集里没有那个动作"维持才牢。
+
+- **投递用 `precede` 而不是 `prompt`/`followUp`**：
+  `precede` 是"落到分支上、等下一轮被读到，且不唤醒"。
+  用会唤醒的原语会让 Main 再次变 idle → 再触发一次 review → 死循环。
+
+- **gate 落实了 §5.2 列的每一条**（都有测试）：
+  动作必须在七个之内、`novelty_key` 去重、同 (action,target) 去重、
+  重复的无动作建议（第二个 `stop`）丢弃、
+  引用的 evidence id 必须在轨迹里真实存在、每 episode 上限、每动作上限。
+  每一次拒绝都带原因记进 `refusals`——**被静默丢掉的建议和从未产生的建议
+  在数据上完全一样**，那会让 sidecar 的贡献无法度量。
+  还有一条测试钉住"超限被拒时不消耗 novelty key"。
+
+- 途中修的三个真实缺陷（都是实测发现的，不是想出来的）：
+
+  1. **通道状态放错了作用域**。`gates` / `tracesUnderReview` 原来声明在
+     `activate` 闭包里，而 extension 是**每个 agent 激活一次**——
+     Reviewer 有自己的激活、自己的空 Map，于是它调 `provide_advice` 时
+     查不到自己的 review。已提到模块作用域，按 agentId 归键。
+  2. **Reviewer 起在了不可用的默认模型上**。spawn 不传 model 就用
+     `defaultModel`，而本 namespace 的默认是 `kimi-coding/k3`（无凭据，
+     启动诊断一直在报）。结果 Reviewer 的一轮产出**空内容**，
+     看起来和"它没有建议"一模一样。
+     新增 `SCHOLAR_REVIEWER_MODEL`（`provider/id`）。
+     这也正是 M 轴实验需要的旋钮：审查模型是那个实验的变量。
+  3. **投递给 Reviewer 的消息渲染成了 extension 通知而不是用户轮**。
+     加 `source: {kind: "human"}`。
+
+- 还有一个**不是产品缺陷、是我的测试脚手架的问题**，值得记下来：
+  前几次 Reviewer 的 session 里是 `stopReason: aborted`、usage 全零——
+  一次 provider 调用都没发。原因是我的驱动脚本在 prompt 返回后立刻
+  `run_summary` + `shutdown`，而 Reviewer 恰好是在 Main 变 idle 时才被 spawn 的，
+  于是整棵树连同 Reviewer 一起被 abort。
+  加了 `wait_tree_idle` 之后才跑通。
+  **诊断路径值得记**：是读 `widis/.widi-scholar/runs/.../reviewer-*/session.jsonl`
+  看到 `aborted` + 零 usage 才定位的，从工具计数上完全看不出来。
+
+- 验收（实际命令与输出）：
+  1. `tsgo` 退出 0；`biome check --error-on-warnings` 对 10 个非 fixture 文件
+     `No fixes applied.`；`npm run test:widis` → `150/150`（S7 是 124，本 stage +26）；
+     Python 侧未改动，`pytest -q` → `111 passed`。
+  2. **Reviewer 至少产生一条 `provide_advice`**：
+     `run_summary` → `tools: {calls:24, failed:1,
+     byName:{list_providers:1, search_metadata:7, get_paper:15, provide_advice:1}}`。
+     `runs/trajectories/search-q1ql.review.json`：
+     ```
+     reviewer: reviewer-fbb4 | admitted: 1 | refusals: 0
+     [rerank] target "result set"
+       "The returned candidate set contains significant noise, including papers on
+        unrelated topics such as audio deepfakes, video enrichment, and LLM security..."
+       evidence: ["2404.13892","2405.17706","2404.16891","2402.14679","2309.15217"]
+       novelty_key: "high noise in results"
+     ```
+     这条建议是**真的对**：那次检索问的是 RAG 用于代码补全，
+     而结果里混进了音频深度伪造检测、第三方 API 攻击。
+     引用的 5 个 id 全部通过了 gate 的"必须在轨迹里存在"检查。
+  3. **证明 Reviewer 的上下文里没有 Main 的私有推理**，两条独立证据：
+     - Reviewer 的 session 只有 4 个条目：一条输入（渲染后的轨迹）、
+       它自己的 assistant 轮、一条 toolResult、收尾的 assistant 轮。
+       没有任何来自 Main 的消息。
+     - 从 Main 的 session 里提出它全部 16 个 thinking block（共 5355 字符），
+       取 30 个各 60 字符的特征片段，逐个在 Reviewer 的**整个 session 文件**里搜索：
+       **leaks found: 0**。
+
+- 一个已知的运行期问题（未修）：`wait_tree_idle` 在 300 秒后超时，
+  尽管 review 已经完成。Reviewer 是 `persist: true` 且不会自己 dispose，
+  所以这棵树不会真正变 idle。对验收没有影响（review 已经跑完并落盘），
+  但 S9 的评测 runner 需要一个明确的 episode 终止条件，
+  不能依赖 `wait_tree_idle`。记在这里给 S9。
+
+- commit: `PENDING_S8`
+
 
 
 

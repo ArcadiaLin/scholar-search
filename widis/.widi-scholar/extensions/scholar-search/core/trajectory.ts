@@ -29,6 +29,7 @@ export const COLLECTED_EVENTS = ["tool_execution_start", "tool_execution_end"] a
 
 const DEFAULT_MAX_CALLS = 200;
 const DEFAULT_MAX_ARG_CHARS = 2_000;
+const DEFAULT_MAX_EVIDENCE = 300;
 
 /** One tool call as the Reviewer sees it. */
 export interface TraceCall {
@@ -66,12 +67,30 @@ export interface TraceBudget {
 	readonly droppedCalls: number;
 }
 
+/**
+ * One candidate as a referenceable piece of evidence.
+ *
+ * `EvidenceState` in `docs/design.md` §5.1 - what the search *found*, as against
+ * `SearchState`'s what it *did*. Identity and a title only: a Reviewer needs an
+ * id it can cite, and a trace carrying abstracts would grow with the corpus in
+ * exactly the way the summary view exists to prevent.
+ */
+export interface TraceEvidence {
+	readonly paperId: string;
+	readonly title: string;
+	readonly sources: readonly string[];
+	/** Which tool call surfaced it, so a claim about coverage can be attributed. */
+	readonly foundBy: string;
+}
+
 export interface PublicSearchTrace {
 	readonly agentId: string;
 	readonly profileId: string;
 	/** Every subquery the agent issued across the episode, in arrival order, deduplicated. */
 	readonly subqueries: readonly string[];
 	readonly calls: readonly TraceCall[];
+	/** The evidence ids a Reviewer may cite. Bounded, like everything else here. */
+	readonly evidence: readonly TraceEvidence[];
 	readonly budget: TraceBudget;
 	readonly candidateCounts: { readonly recalled: number; readonly returned: number };
 	readonly failures: readonly {
@@ -86,6 +105,7 @@ export interface TraceCollectorOptions {
 	readonly profileId: string;
 	readonly maxCalls?: number;
 	readonly maxArgChars?: number;
+	readonly maxEvidence?: number;
 }
 
 /**
@@ -174,6 +194,37 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 	};
 }
 
+/**
+ * Harvest referenceable evidence from a tool result.
+ *
+ * Reads the summary shape every retrieval tool puts in `details`, and takes only
+ * identity plus title. Bounded and first-wins: an episode that keeps finding the
+ * same paper should not keep growing the trace, and the *first* call that
+ * surfaced a paper is the attribution a coverage claim needs.
+ */
+function collectEvidence(details: unknown, toolCallId: string, into: Map<string, TraceEvidence>, max: number): void {
+	if (!isRecord(details)) return;
+	const lists: unknown[] = [details.papers];
+	if (isRecord(details.paper)) lists.push([details.paper]);
+	for (const list of lists) {
+		if (!Array.isArray(list)) continue;
+		for (const entry of list) {
+			if (into.size >= max) return;
+			if (!isRecord(entry)) continue;
+			const paperId = typeof entry.paperId === "string" ? entry.paperId : undefined;
+			if (paperId === undefined || paperId === "" || into.has(paperId)) continue;
+			into.set(paperId, {
+				paperId,
+				title: typeof entry.title === "string" ? entry.title : "",
+				sources: Array.isArray(entry.sources)
+					? entry.sources.filter((item): item is string => typeof item === "string")
+					: [],
+				foundBy: toolCallId,
+			});
+		}
+	}
+}
+
 /** The tool's own error text, which is the actionable diagnostic the tool threw. */
 function errorMessageOf(result: unknown): string | undefined {
 	if (!isRecord(result)) return undefined;
@@ -189,10 +240,12 @@ function errorMessageOf(result: unknown): string | undefined {
 export function createTraceCollector(options: TraceCollectorOptions): TraceCollector {
 	const maxCalls = options.maxCalls ?? DEFAULT_MAX_CALLS;
 	const maxArgChars = options.maxArgChars ?? DEFAULT_MAX_ARG_CHARS;
+	const maxEvidence = options.maxEvidence ?? DEFAULT_MAX_EVIDENCE;
 
 	// Keyed by tool-call id rather than pushed to an array: `start` and `end` for
 	// one call can arrive in either order, and both contribute to one record.
 	const byId = new Map<string, { -readonly [K in keyof TraceCall]: TraceCall[K] }>();
+	const evidence = new Map<string, TraceEvidence>();
 	let arrivals = 0;
 	let dropped = 0;
 
@@ -239,9 +292,11 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 			}
 			if (type === "tool_execution_end") {
 				record.failed = observed.isError === true;
-				const state = parseTraceSearchState(isRecord(observed.result) ? observed.result.details : undefined);
+				const details = isRecord(observed.result) ? observed.result.details : undefined;
+				const state = parseTraceSearchState(details);
 				if (state !== undefined) record.searchState = state;
 				if (observed.isError === true) record.errorMessage = errorMessageOf(observed.result);
+				collectEvidence(details, toolCallId, evidence, maxEvidence);
 			}
 			return true;
 		},
@@ -276,6 +331,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				profileId: options.profileId,
 				subqueries,
 				calls,
+				evidence: [...evidence.values()],
 				budget: { totalCalls: calls.length, failedCalls, callsByTool, droppedCalls: dropped },
 				candidateCounts: { recalled, returned },
 				failures,

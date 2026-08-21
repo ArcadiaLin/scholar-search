@@ -294,3 +294,101 @@ describe("collector robustness", () => {
 		);
 	});
 });
+
+describe("the trace carries citable evidence", () => {
+	// EvidenceState in design.md §5.1: what the search *found*, as against what it
+	// *did*. Without it a Reviewer has no id it can cite, and the gate's
+	// "evidence must exist" rule would reject everything.
+	function resultWithPapers(papers: unknown[], extra: Record<string, unknown> = {}) {
+		return { content: [{ type: "text", text: "ok" }], details: { papers, ...extra } };
+	}
+
+	it("collects paper identity and attributes it to the call that found it", () => {
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([{ paperId: "10.1/a", title: "A Paper", sources: ["openalex"] }]),
+			isError: false,
+		});
+
+		const evidence = trace.snapshot().evidence;
+		assert.equal(evidence.length, 1);
+		assert.equal(evidence[0]?.paperId, "10.1/a");
+		assert.equal(evidence[0]?.title, "A Paper");
+		assert.equal(evidence[0]?.foundBy, "c1", "attribution is what makes a coverage claim checkable");
+	});
+
+	it("keeps the first call that surfaced a paper, not the last", () => {
+		const trace = collector();
+		for (const id of ["c1", "c2"]) {
+			trace.record({ type: "tool_execution_start", toolCallId: id, toolName: "search_metadata", args: {} });
+			trace.record({
+				type: "tool_execution_end",
+				toolCallId: id,
+				toolName: "search_metadata",
+				result: resultWithPapers([{ paperId: "10.1/a", title: "A Paper", sources: [] }]),
+				isError: false,
+			});
+		}
+
+		const evidence = trace.snapshot().evidence;
+		assert.equal(evidence.length, 1, "the same paper found twice is one piece of evidence");
+		assert.equal(evidence[0]?.foundBy, "c1");
+	});
+
+	it("collects the single paper from get_paper too", () => {
+		const trace = collector();
+		trace.record({
+			type: "tool_execution_start",
+			toolCallId: "c1",
+			toolName: "get_paper",
+			args: { paper_id: "10.1/a" },
+		});
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "get_paper",
+			result: { content: [], details: { paper: { paperId: "10.1/a", title: "A Paper", sources: [] } } },
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().evidence[0]?.paperId, "10.1/a");
+	});
+
+	it("bounds the evidence list", () => {
+		const trace = createTraceCollector({ agentId: "a", profileId: "search", maxEvidence: 3 });
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers(
+				Array.from({ length: 50 }, (_, i) => ({ paperId: `10.1/${i}`, title: "t", sources: [] })),
+			),
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().evidence.length, 3);
+	});
+
+	it("does not turn an abstract into evidence", () => {
+		// Identity and title only. A trace carrying abstracts would grow with the
+		// corpus, which is the thing the summary view exists to prevent.
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([
+				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "a very long abstract indeed" },
+			]),
+			isError: false,
+		});
+
+		assert.ok(!JSON.stringify(trace.snapshot().evidence).includes("very long abstract"));
+	});
+});

@@ -40,8 +40,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	EXTENSION_API_VERSION,
+	type ExtensionContext,
 	type ExtensionDefinition,
 } from "../../../../packages/widi/apps/widi/src/core/extension/api.ts";
+import { ADVICE_ACTIONS, type AdviceGate, createAdviceGate, renderTraceForReviewer } from "./core/review.ts";
 import {
 	createServiceClient,
 	type PaperSummary,
@@ -233,6 +235,36 @@ function formatSearchState(state: SearchStateRecord): string {
 }
 
 export const TRACE_DIR_ENV_VAR = "SCHOLAR_TRACE_DIR";
+/**
+ * The sidecar is off unless asked for.
+ *
+ * It costs a second model and it changes the Main Agent's context, so it must be
+ * a deliberate choice rather than something a search silently acquires. The M-axis
+ * experiment needs both arms anyway (`docs/prototype.md` §6.5), which means the
+ * switch has to exist regardless.
+ */
+export const REVIEWER_ENV_VAR = "SCHOLAR_REVIEWER";
+/**
+ * Which model reviews, as `provider/id`.
+ *
+ * Needed rather than optional in practice: a spawned agent takes the runtime's
+ * default model, and this namespace's default is deliberately left as the user's
+ * own preference - which may well be a model with no credentials configured. A
+ * Reviewer spawned on an unavailable model completes its turn having produced
+ * nothing at all, which looks exactly like a Reviewer with no advice to give.
+ *
+ * It is also the knob the M-axis experiment needs: the reviewing model is a
+ * variable of that experiment, not a property of the search.
+ */
+export const REVIEWER_MODEL_ENV_VAR = "SCHOLAR_REVIEWER_MODEL";
+export const REVIEWER_PROFILE_ID = "reviewer";
+/** One review per episode. The checkpoint list in design.md §5.2 is richer; this is the last of them. */
+const MAX_REVIEWS_PER_AGENT = 1;
+
+function reviewerEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
+	const value = env[REVIEWER_ENV_VAR];
+	return value === "1" || value?.toLowerCase() === "true" || value?.toLowerCase() === "on";
+}
 /** Archived traces are one of the three things allowed to outlive an episode (`search-service.md` §5.3). */
 const DEFAULT_TRACE_SUBDIR = join("runs", "trajectories");
 
@@ -262,12 +294,88 @@ async function writeTrace(trace: PublicSearchTrace, cwd: string): Promise<string
 	}
 }
 
+/**
+ * Archive what the review did, including what the gate refused.
+ *
+ * The refusals are the interesting half: they are the record of what the sidecar
+ * tried to say and was not allowed to, which is what separates "the reviewer had
+ * nothing to add" from "the reviewer repeated itself six times".
+ */
+/**
+ * The Reviewer's own answer, bounded.
+ *
+ * Recorded so "it had nothing to add" can be told apart from "it never answered"
+ * and from "it answered in prose without registering a verdict". Those three are
+ * the same empty advice list, and only one of them means the channel worked.
+ */
+function summariseOutcome(outcome: unknown): string {
+	if (outcome === undefined || outcome === null) return "(no outcome recorded)";
+	if (typeof outcome !== "object") return String(outcome).slice(0, 600);
+	const record = outcome as Record<string, unknown>;
+	if (typeof record.failed === "string") return `prompt failed: ${record.failed.slice(0, 400)}`;
+	const message = record.message as Record<string, unknown> | undefined;
+	const content = message?.content;
+	if (Array.isArray(content)) {
+		const text = content
+			.filter((part): part is Record<string, unknown> => typeof part === "object" && part !== null)
+			.filter((part) => part.type === "text")
+			.map((part) => (typeof part.text === "string" ? part.text : ""))
+			.join("\n")
+			.trim();
+		if (text !== "") return text.slice(0, 1_500);
+	}
+	const kind = typeof record.kind === "string" ? record.kind : "unknown";
+	return `(no text; outcome kind: ${kind})`;
+}
+
+async function writeReview(
+	subjectAgentId: string,
+	reviewerAgentId: string,
+	gate: AdviceGate | undefined,
+	cwd: string,
+	outcome?: unknown,
+): Promise<void> {
+	if (gate === undefined) return;
+	try {
+		const directory = resolveTraceDir(process.env, cwd);
+		await mkdir(directory, { recursive: true });
+		const payload = {
+			subjectAgentId,
+			reviewerAgentId,
+			admitted: gate.admitted(),
+			refusals: gate.refusals(),
+			// What the Reviewer actually said, so "it had nothing to add" can be told
+			// apart from "it never answered" and from "it answered without recording
+			// a verdict". All three produce an empty advice list.
+			reviewerReply: summariseOutcome(outcome),
+		};
+		await writeFile(join(directory, `${subjectAgentId}.review.json`), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+	} catch {
+		// As with the trace: a review that cannot be archived must not break anything.
+	}
+}
+
+/**
+ * Per-agent state for the trace and the Reviewer channel, at module scope.
+ *
+ * Module scope rather than the activation closure: an extension activates
+ * **once per agent**, so the Reviewer gets its own activation with its own
+ * closure. Holding this state there meant the Reviewer looked up its own review
+ * and found an empty map, because the trace had been recorded in the subject
+ * agent's activation. Keyed by agent id, which is what actually scopes an
+ * episode.
+ */
+const collectors = new Map<string, TraceCollector>();
+const gates = new Map<string, AdviceGate>();
+const tracesUnderReview = new Map<string, PublicSearchTrace>();
+const reviewsRun = new Map<string, number>();
+const reviewerToSubject = new Map<string, string>();
+
 const extension: ExtensionDefinition = {
 	apiVersion: EXTENSION_API_VERSION,
 	activate: (api) => {
 		// One collector per agent: the trace is an episode-scoped artefact, and an
 		// agent tree can hold several agents at once.
-		const collectors = new Map<string, TraceCollector>();
 		const collectorFor = (agentId: string): TraceCollector => {
 			const existing = collectors.get(agentId);
 			if (existing) return existing;
@@ -282,9 +390,12 @@ const extension: ExtensionDefinition = {
 			collectorFor(event.agentId).record(event.event);
 		});
 
+		// The Reviewer channel's state. Keyed by the agent under review, because
+		// $C^R_t \neq C^M_t$ has to hold per episode, not per process.
+
 		// An idle agent has finished its turn, which is when the trace is worth
-		// publishing. Emitted on the bus for the Reviewer channel and written to
-		// disk for a human to check.
+		// publishing. Emitted on the bus, written to disk for a human to check, and
+		// - if the sidecar is on - handed to a Reviewer.
 		api.observe("agent_idle", async (event, context) => {
 			const collector = collectors.get(event.agentId);
 			if (!collector) return;
@@ -294,8 +405,244 @@ const extension: ExtensionDefinition = {
 			try {
 				await context.actions.emitExtensionEvent("scholar-search:trace", JSON.parse(JSON.stringify(trace)));
 			} catch {
-				// The bus having no listener yet is the normal case until S8.
+				// A bus with no listener is the normal case; the trace is still on disk.
 			}
+
+			if (!reviewerEnabled(process.env)) return;
+			// Never review a Reviewer, or the channel reviews itself forever.
+			if (reviewerToSubject.has(event.agentId)) return;
+			if ((reviewsRun.get(event.agentId) ?? 0) >= MAX_REVIEWS_PER_AGENT) return;
+			reviewsRun.set(event.agentId, (reviewsRun.get(event.agentId) ?? 0) + 1);
+			await runReview(event.agentId, trace, context);
+		});
+
+		/**
+		 * Spawn a Reviewer and hand it the trace.
+		 *
+		 * The extension spawns it, not the Main Agent. That is what makes the
+		 * channel a bypass: `profiles/search.md` lists neither `spawn_agent` nor
+		 * `send_message`, so Main has no way to reach a Reviewer even if it wanted
+		 * one. "Main cannot ask for help" is a property of the tool set, not a rule
+		 * in a prompt (`docs/design.md` §3).
+		 */
+		async function runReview(
+			subjectAgentId: string,
+			trace: PublicSearchTrace,
+			context: ExtensionContext,
+		): Promise<void> {
+			const reviewerModel = process.env[REVIEWER_MODEL_ENV_VAR]?.trim();
+			let reviewerId: string;
+			try {
+				reviewerId = await context.actions.spawnAgent({
+					origin: { kind: "new", profileId: REVIEWER_PROFILE_ID },
+					...(reviewerModel ? { model: reviewerModel } : {}),
+				});
+			} catch (error) {
+				// A review that could not start is a fact about the configuration, and
+				// it has to be recorded: an absent review file is indistinguishable
+				// from a review that ran and found nothing.
+				await writeReview(subjectAgentId, "(not spawned)", createAdviceGate(), process.cwd(), {
+					failed: `spawnAgent failed: ${error instanceof Error ? error.message : String(error)}`,
+				});
+				return;
+			}
+
+			reviewerToSubject.set(reviewerId, subjectAgentId);
+			tracesUnderReview.set(reviewerId, trace);
+			gates.set(reviewerId, createAdviceGate());
+
+			let outcome: unknown;
+			try {
+				outcome = await context.actions.prompt(
+					`${renderTraceForReviewer(trace)}\n\n` +
+						"Review this search. Record your verdict by calling provide_advice at least once: use an " +
+						"actionable action for anything that should change, citing evidence ids from the trace above, " +
+						"or a single `stop` if the search looks sound. Do not answer in prose alone - a verdict that " +
+						"is not recorded through the tool is not part of the trajectory and cannot be attributed.",
+					// Rendered as a human turn rather than as an extension notice. The
+					// label is provenance only, but it decides how the message reaches
+					// the model, and an extension-labelled message left this model
+					// answering with empty content: a conversation whose last turn is
+					// not a user turn is not one it replies to.
+					{ target: reviewerId, source: { kind: "human", label: "public search trace" } },
+				);
+			} catch (error) {
+				// A Reviewer that failed to answer is a missing review, not a failure
+				// of the search it was reviewing.
+				outcome = { failed: error instanceof Error ? error.message : String(error) };
+			}
+
+			const gate = gates.get(reviewerId);
+			const admitted = gate?.admitted() ?? [];
+			if (admitted.length > 0) {
+				const advice = admitted
+					.map(
+						(item, index) =>
+							`${index + 1}. [${item.action}] target: ${item.target || "(none)"}\n` +
+							`   ${item.instructions}\n` +
+							`   expected effect: ${item.expectedEffect || "(not stated)"}\n` +
+							`   evidence: ${item.evidenceIds.join(", ") || "(none cited)"}`,
+					)
+					.join("\n");
+				try {
+					// `precede`, not `prompt` or `followUp`: advice is context for work
+					// not yet started. Waking the agent here would make it go idle again,
+					// which would trigger another review.
+					await context.actions.precede(
+						`Sidecar review of your search (unsolicited; you did not request it and cannot):\n${advice}`,
+						{ target: subjectAgentId },
+					);
+				} catch {
+					// Delivery failing leaves the advice in the trajectory, which is
+					// where the attribution analysis reads it from anyway.
+				}
+			}
+
+			await writeReview(subjectAgentId, reviewerId, gate, process.cwd(), outcome);
+		}
+
+		api.registerTool({
+			name: "provide_advice",
+			label: "Provide Advice",
+			description:
+				"Offer one piece of actionable advice about the search you are reviewing. " +
+				"`action` must come from the fixed set; `evidence_ids` must be ids from the trace you were given; " +
+				"`novelty_key` is how repeats are detected. Advice is capped per episode, and a refusal comes back " +
+				"with its reason - read it rather than re-sending the same point.",
+			parameters: {
+				type: "object",
+				properties: {
+					action: {
+						type: "string",
+						enum: [...ADVICE_ACTIONS],
+						description: "What the searching agent should do differently.",
+					},
+					target: { type: "string", description: "What the advice is about: a query, a source, a paper id, a facet." },
+					instructions: { type: "string", description: "What to do, concretely enough to act on." },
+					evidence_ids: {
+						type: "array",
+						items: { type: "string" },
+						description: "Ids from the trace that support this. Ids not in the trace are refused.",
+					},
+					confidence: { type: "number", minimum: 0, maximum: 1, description: "How confident you are." },
+					expected_effect: { type: "string", description: "What should change if this advice is followed." },
+					novelty_key: { type: "string", description: "Short key describing what is new here; repeats are dropped." },
+				},
+				required: ["action", "instructions", "novelty_key"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const reviewerId = context.extension?.host?.agentId;
+				const gate = reviewerId === undefined ? undefined : gates.get(reviewerId);
+				const trace = reviewerId === undefined ? undefined : tracesUnderReview.get(reviewerId);
+				if (gate === undefined || trace === undefined) {
+					throw new Error(
+						"provide_advice is only available to a Reviewer that was given a trace to review. " +
+							"There is no review in progress for this agent.",
+					);
+				}
+
+				const evidenceIds = new Set<string>([
+					...trace.evidence.map((item) => item.paperId),
+					...trace.calls.map((call) => call.toolCallId),
+				]);
+				const result = gate.admit(params, { evidenceIds });
+				if (!result.admitted) {
+					// A refusal is a tool result, not a thrown error: the Reviewer should
+					// read the reason and decide, not treat it as a broken tool.
+					const text = `Advice refused (${result.refusal}): ${result.reason}`;
+					return { content: [{ type: "text", text }], details: { admitted: false, refusal: result.refusal } };
+				}
+				const text =
+					`Advice accepted (${result.advice?.action}). ` +
+					`${gate.admitted().length} of the episode's advice budget used.`;
+				return { content: [{ type: "text", text }], details: { admitted: true, advice: result.advice } };
+			},
+		});
+
+		api.registerTool({
+			name: "inspect_evidence",
+			label: "Inspect Evidence",
+			description:
+				"Look up evidence ids from the trace you are reviewing. Read-only, and limited to the trace - it " +
+				"cannot fetch anything the search did not already find.",
+			parameters: {
+				type: "object",
+				properties: {
+					evidence_ids: { type: "array", items: { type: "string" }, minItems: 1, description: "Ids to look up." },
+				},
+				required: ["evidence_ids"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const reviewerId = context.extension?.host?.agentId;
+				const trace = reviewerId === undefined ? undefined : tracesUnderReview.get(reviewerId);
+				if (trace === undefined) throw new Error("inspect_evidence needs a trace under review; there is none.");
+
+				const input = readParams<{ evidence_ids: string[] }>(params);
+				const wanted = new Set(Array.isArray(input.evidence_ids) ? input.evidence_ids : []);
+				const found = trace.evidence.filter((item) => wanted.has(item.paperId));
+				const calls = trace.calls.filter((call) => wanted.has(call.toolCallId));
+				const missing = [...wanted].filter(
+					(id) => !found.some((item) => item.paperId === id) && !calls.some((call) => call.toolCallId === id),
+				);
+
+				const lines = [`${found.length} paper(s) and ${calls.length} call(s) matched.`];
+				for (const item of found)
+					lines.push(`  ${item.paperId} :: ${item.title} [sources: ${item.sources.join(", ")}]`);
+				for (const call of calls) {
+					lines.push(
+						`  ${call.toolCallId} :: ${call.toolName}${call.failed ? " FAILED" : ""} ${JSON.stringify(call.args)}`,
+					);
+				}
+				// Naming the misses matters: it is how the Reviewer learns an id it was
+				// about to cite is not citable.
+				if (missing.length > 0) lines.push(`  not in this trace: ${missing.join(", ")}`);
+
+				let text = lines.join("\n");
+				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
+				return { content: [{ type: "text", text }], details: { found, calls, missing } };
+			},
+		});
+
+		api.registerTool({
+			name: "get_ranking_features",
+			label: "Get Ranking Features",
+			description:
+				"Report the ranking features and reason recorded for papers in the trace you are reviewing. " +
+				"Read-only. This service build records rank and score only; richer features do not exist yet, " +
+				"and the answer says so rather than inventing them.",
+			parameters: {
+				type: "object",
+				properties: {
+					paper_ids: { type: "array", items: { type: "string" }, minItems: 1, description: "Papers to report on." },
+				},
+				required: ["paper_ids"],
+			},
+			async execute(_toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const reviewerId = context.extension?.host?.agentId;
+				const trace = reviewerId === undefined ? undefined : tracesUnderReview.get(reviewerId);
+				if (trace === undefined) throw new Error("get_ranking_features needs a trace under review; there is none.");
+
+				const input = readParams<{ paper_ids: string[] }>(params);
+				const wanted = new Set(Array.isArray(input.paper_ids) ? input.paper_ids : []);
+				const known = trace.evidence.filter((item) => wanted.has(item.paperId));
+				const lines = [
+					"This build records no per-paper ranking features. What the trace holds is which call surfaced " +
+						"each paper and which source supplied it; treat any claim about feature weights as unsupported.",
+				];
+				for (const item of known) {
+					lines.push(`  ${item.paperId}: found by ${item.foundBy}, sources ${item.sources.join(", ") || "unknown"}`);
+				}
+				const missing = [...wanted].filter((id) => !known.some((item) => item.paperId === id));
+				if (missing.length > 0) lines.push(`  not in this trace: ${missing.join(", ")}`);
+
+				return {
+					content: [{ type: "text", text: lines.join("\n") }],
+					details: { features: known, rankReason: "not recorded in this build", missing },
+				};
+			},
 		});
 
 		api.registerTool({
