@@ -1034,29 +1034,43 @@ benchmark 可以无头驱动 widi-scholar 了。
   3. 回归：`npm run test:widis` → `150/150`；
      `env -u all_proxy -u ALL_PROXY uv run pytest -q` → `111 passed`。
 
-- **补了 TUI 入口**（同一次维护）。原来只有 pasa 有显式名字（`widi:pasa`），
-  scholar 是 namespace 省略时的隐式默认（`widi`），不对称且不好发现。新增：
+- **`npm run widi:scholar`：一条命令进到可用的检索 agent**（同一次维护）。
 
-  | 命令 | 根 profile | 说明 |
-  | --- | --- | --- |
-  | `widi:scholar` / `:dev` / `:rpc` | `main` | 与 `widi:pasa` 对称的显式名字 |
-  | `widi:search` / `:dev` | `search` | 直接进检索 agent |
+  之前要在 TUI 里试检索得做三件事：另起终端跑 Search Service、设
+  `SCHOLAR_SEARCH_SERVICE_URL`、进 TUI 后切到 `search` profile。
+  漏掉第一步时九个工具**全部**失败，而失败信息是"服务不可达"——
+  看起来像 extension 的 bug。这个误诊值得用一个脚本消掉。
 
-  `widi` / `widi:dev` / `widi:rpc` **保留不动**：S9 的 eval runner 按名字调用
-  `widi:rpc`（`rpc-client.mjs` 的 `script` 默认值），改名会破坏评测入口。
+  新增 `scripts/run-scholar.mjs`：起 Service → 轮询 `/health` 直到真的应答 →
+  把地址经环境变量传给 extension → 以 `--profile search` 开 TUI →
+  TUI 退出时结束它起的那个 Service。
 
-  `--profile` 的透传本来就成立（`run-widi.mjs` 的 `appendDefaultOption`
-  只在缺省时补 `main`），所以 `widi:search` 不需要改脚本，只是一行 npm script。
-  实测：
+  三个设计点：
+  - **已在跑的 Service 复用而不是再起一个**（先探 `/health`），
+    退出时也只关自己起的那个——否则会去关掉别人正在调试的进程。
+  - **uvicorn 日志写 `runs/logs/search-service.log`，不进终端**：
+    每请求一行的日志会把全屏 TUI 冲花。
+  - **脚本自己的状态行走 stderr 而不是 stdout**：`--mode rpc` 下 stdout 是
+    JSONL 流，`rpc-client.mjs` 对非 JSON 行是直接判协议违规的。
+
+  `widi` / `widi:dev` / `widi:rpc` 保留不动：S9 的 eval runner 按名字调用
+  `widi:rpc`（`rpc-client.mjs` 的 `script` 默认值），而且评测**不该**顺带起
+  Service——它需要自己控制 Service 的地址与生命周期。
+
+  验收（`--mode rpc` 代替 TUI，其余同一条链路）：
   ```
-  $ node scripts/run-widi.mjs --namespace scholar --mode rpc --profile search
+  [stderr] Starting Search Service at http://127.0.0.1:8000 (log: runs/logs/search-service.log)
+  [stderr] Search Service is up.
   diagnostics: []
   profile: {"id":"search","label":"Scholar Search Agent"}
   tools: ["list_providers","search_metadata","get_paper","provider_query",
           "expand_citations","facet_probe","rank_candidates","search_fulltext","get_budget"]
   ```
-  九个检索工具、无 `bash`/`write`/`edit`——与 S3 的验收一致。
-  `npm run check:workspace` → `Checked 4 files. No fixes applied.`
+  另外三项：stdout 全程是合法 JSONL（探针会把非 JSON 行报出来，没有出现）；
+  Service 日志里 `GET /providers` 出现 1 次，证明工具真的打到了 Service；
+  退出后 `ss -ltn` 里 8000 端口已释放、Service 日志以
+  `Application shutdown complete` 收尾。
+  `npm run check:workspace` → `Checked 5 files. No fixes applied.`
 
 
 

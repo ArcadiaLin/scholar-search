@@ -94,29 +94,30 @@ jiti 无法从 `widis/` 解析裸 `typebox` 导入，且固定版本里 typebox 
 
 ```bash
 npm run bootstrap                     # 首次：初始化 submodule + npm ci + uv sync
-npm run widi:scholar                  # 启动 Scholar TUI（dist，需先 npm run build）
-npm run widi:scholar:dev              # 同上，跑 TypeScript 源码
-npm run widi:search                   # 直接进检索 agent（--profile search）
+npm run build                         # widi:scholar 跑的是 dist
+npm run widi:scholar                  # ← 用这个：Search Service + 检索 agent TUI
+npm run widi:scholar:dev              # 同上，WIDI 跑 TypeScript 源码
 npm run test:widis                    # 跑所有 namespace extension 测试
 ```
 
-`widi:scholar*` 与更早的 `widi` / `widi:dev` / `widi:rpc` 是同一条命令——
-后者是 namespace 省略时的默认形态，保留是因为 S9 的 eval runner 按名字调用
-`widi:rpc`。新加的显式名字只是为了和 `widi:pasa` 对称。
+**`npm run widi:scholar` 是看这个原型的入口。** 它做三件事
+（`scripts/run-scholar.mjs`）：起 Python Search Service 并等它真的应答 `/health`、
+把地址经 `SCHOLAR_SEARCH_SERVICE_URL` 传给 extension、以 `--profile search`
+打开 TUI。退出 TUI 时它起的那个 Service 一起结束。
 
-`widi:scholar` 开的是 `main` profile（一个有 shell 与文件系统的通用 agent）；
-**要看检索 agent 本身用 `widi:search`**，它的根 agent 就是 `profiles/search.md`，
-工具集只有那九个检索工具。任何一个入口都能加 `-- --profile <id>` 改 profile，
-例如 `npm run widi:scholar -- --profile reviewer`。
+为什么要合成一条命令：九个检索工具是 Search Service 的瘦客户端，
+Service 没起时它们**全部**失败，而失败信息（"服务不可达"）看起来像 extension
+的 bug。把两半绑在一起，这个误诊就不会发生。
 
-检索工具要能真的返回东西，得另起一个终端跑 Search Service：
+两个行为值得知道：已经在跑的 Service 会被复用而不是再起一个（先探 `/health`），
+退出时也不会去关别人的进程；uvicorn 的日志写到 `runs/logs/search-service.log`
+而不是终端，否则会把全屏 TUI 冲花。
 
-```bash
-cd src/search-service && PYTHONPATH=src \
-  uv run uvicorn search_service.main:app --host 127.0.0.1 --port 8000
-```
+要开别的角色就传 profile，例如 `npm run widi:scholar -- --profile reviewer`；
+`main`（有 shell 与文件系统的通用 agent）是 `npm run widi`。
 
-extension 从 `SCHOLAR_SEARCH_SERVICE_URL` 读地址，缺省 `http://127.0.0.1:8000`。
+`widi` / `widi:dev` / `widi:rpc` 保留不动——S9 的 eval runner 按名字调用
+`widi:rpc`，而且它们不该顺带起 Service：评测需要自己控制 Service 的地址与生命周期。
 
 单个 extension 的类型与格式检查（`npm run check` **不覆盖**动态加载的 extension）：
 
