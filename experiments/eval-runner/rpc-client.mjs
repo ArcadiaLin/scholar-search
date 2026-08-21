@@ -21,8 +21,13 @@ import { createInterface } from "node:readline";
  * Bumped when this client's own recorded shape changes, so a stored run can be
  * read back by the code that understands it. Separate from the RPC protocol
  * version, which belongs to WIDI.
+ *
+ * `2`: each result carries `agentId` (how the scorer finds that query's answer
+ * pool) and `gold`, and the run record carries `traceDir`. A version-1 record has
+ * none of the three, so it cannot be scored by `score.mjs` without being told
+ * where the pools are.
  */
-export const RUNNER_VERSION = "1";
+export const RUNNER_VERSION = "2";
 
 export class RpcClientError extends Error {
 	constructor(message, details) {

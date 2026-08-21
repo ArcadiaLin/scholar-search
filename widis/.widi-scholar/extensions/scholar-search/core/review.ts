@@ -225,6 +225,284 @@ export function createAdviceGate(options: AdviceGateOptions = {}): AdviceGate {
 }
 
 /**
+ * R1-R7: the conditions that make a review worth delivering.
+ *
+ * These are pure functions of $\bar{\tau}_t$, and that is the load-bearing part.
+ * If whether to intervene depended on the Reviewer model's judgement, the
+ * intervention rate would be an endogenous variable and
+ * $\Delta_{\mathrm{sidecar}}$ could not be attributed to anything - the same
+ * objection that killed the `ask_reviewer` design
+ * (`docs/develop/mapping.md` §3.4, `docs/reviewer-design.md` §5.1). So the split
+ * is: detectors decide *whether*, the Reviewer decides *what to say*.
+ *
+ * R1, R3 and R6 are not hypotheses. They name three behaviours measured in the
+ * 2026-08-21 sessions: across three episodes `facet_probe`, `rank_candidates` and
+ * `search_fulltext` were called zero times, all thirty issued queries were
+ * keyword-shaped with not one phrase query, and the fetch-to-search ratio ran
+ * above one throughout (`reviewer-design.md` §2.1, §2.2). A detector that cannot
+ * recognise those three is not written correctly.
+ *
+ * Thresholds arrive from the service (`config.yaml`'s `review:` section, D-15).
+ * They are not defaults here beyond what makes the module runnable standalone:
+ * a threshold hard-coded in this file is a threshold an $HP$ search cannot vary.
+ */
+export const DETECTOR_IDS = ["R1", "R2", "R3", "R4", "R5", "R6", "R7"] as const;
+
+export type DetectorId = (typeof DETECTOR_IDS)[number];
+
+export interface DetectorThresholds {
+	readonly minSearchesBeforeFacetProbe: number;
+	readonly subqueryJaccardCeiling: number;
+	readonly minSubqueriesForMonotony: number;
+	readonly minEvidenceBeforeExpansion: number;
+	readonly maxFailuresPerSource: number;
+	readonly maxFetchPerSearchRatio: number;
+	readonly softCallBudget: number;
+}
+
+/**
+ * Placeholders, and only so this module runs without a service.
+ *
+ * They mirror `config.yaml`'s `review:` section. When the two disagree the
+ * service wins, because the service's copy is the one an experiment can vary.
+ */
+export const FALLBACK_THRESHOLDS: DetectorThresholds = {
+	minSearchesBeforeFacetProbe: 3,
+	subqueryJaccardCeiling: 0.5,
+	minSubqueriesForMonotony: 2,
+	minEvidenceBeforeExpansion: 10,
+	maxFailuresPerSource: 3,
+	maxFetchPerSearchRatio: 1.0,
+	softCallBudget: 40,
+};
+
+export interface DetectedCondition {
+	readonly id: DetectorId;
+	/** Which fixed action this condition argues for. No detector invents an action. */
+	readonly action: AdviceAction;
+	/** What was observed, in numbers, so the Reviewer can quote it rather than paraphrase. */
+	readonly observation: string;
+	/** Ids from the trace that show it, so advice about this condition can cite something. */
+	readonly evidenceIds: readonly string[];
+}
+
+/** What the detectors need to see. A structural subset of `PublicSearchTrace`. */
+export interface DetectorTraceView {
+	readonly subqueries: readonly string[];
+	readonly calls: readonly {
+		readonly toolCallId: string;
+		readonly toolName: string;
+		readonly failed: boolean;
+	}[];
+	readonly evidence: readonly { readonly paperId: string; readonly sources: readonly string[] }[];
+	readonly budget: {
+		readonly totalCalls: number;
+		readonly callsByTool: Readonly<Record<string, number>>;
+	};
+	readonly failures: readonly { readonly source: string | null; readonly errorType: string }[];
+}
+
+/** Content words of a query, lower-cased. Deliberately crude: no stemming, no stop list. */
+function terms(query: string): Set<string> {
+	return new Set(
+		query
+			.toLowerCase()
+			.split(/[^a-z0-9+#.-]+/)
+			.filter((token) => token.length > 2),
+	);
+}
+
+export function jaccard(left: string, right: string): number {
+	const a = terms(left);
+	const b = terms(right);
+	if (a.size === 0 || b.size === 0) return 0;
+	let shared = 0;
+	for (const token of a) if (b.has(token)) shared += 1;
+	return shared / (a.size + b.size - shared);
+}
+
+function callsOf(trace: DetectorTraceView, toolName: string): number {
+	return trace.budget.callsByTool[toolName] ?? 0;
+}
+
+function callIdsOf(trace: DetectorTraceView, toolName: string): string[] {
+	return trace.calls.filter((call) => call.toolName === toolName).map((call) => call.toolCallId);
+}
+
+/**
+ * Run every detector against the trace and return the conditions that hold.
+ *
+ * Order is `DETECTOR_IDS` order, which is stable, so a caller can rely on "the
+ * first new condition" meaning the same thing across calls.
+ */
+export function detectConditions(
+	trace: DetectorTraceView,
+	thresholds: DetectorThresholds = FALLBACK_THRESHOLDS,
+): DetectedCondition[] {
+	const conditions: DetectedCondition[] = [];
+	const searches = callsOf(trace, "search_metadata");
+	const searchIds = callIdsOf(trace, "search_metadata");
+
+	// R1 - never probed the distribution. Measured: zero facet_probe calls across
+	// three sessions and 139 tool calls.
+	if (searches >= thresholds.minSearchesBeforeFacetProbe && callsOf(trace, "facet_probe") === 0) {
+		conditions.push({
+			id: "R1",
+			action: "check_constraint",
+			observation:
+				`${searches} searches issued and facet_probe never called, so nothing has checked how the ` +
+				"results distribute - whether a query is too broad, too narrow, or landing in another field.",
+			evidenceIds: searchIds.slice(0, 3),
+		});
+	}
+
+	// R2 - the queries are one question asked repeatedly. After S10 this is a weak
+	// proxy for what the answer pool shows directly (`reviewer-design.md` §5.4);
+	// it stays because it fires before the agent has committed to anything.
+	if (trace.subqueries.length >= thresholds.minSubqueriesForMonotony) {
+		let minimum = 1;
+		for (let i = 0; i < trace.subqueries.length; i += 1) {
+			for (let j = i + 1; j < trace.subqueries.length; j += 1) {
+				minimum = Math.min(minimum, jaccard(trace.subqueries[i] ?? "", trace.subqueries[j] ?? ""));
+			}
+		}
+		if (minimum >= thresholds.subqueryJaccardCeiling) {
+			conditions.push({
+				id: "R2",
+				action: "increase_diversity",
+				observation:
+					`all ${trace.subqueries.length} subqueries overlap (minimum pairwise Jaccard ` +
+					`${minimum.toFixed(2)} >= ${thresholds.subqueryJaccardCeiling}), so they are one reading of the ` +
+					"question in different words rather than several readings.",
+				evidenceIds: searchIds.slice(0, 3),
+			});
+		}
+	}
+
+	// R3 - not one phrase query. Measured: 30 of 30 queries keyword-shaped, and
+	// the agent had stated in that very episode that it would try phrases.
+	if (trace.subqueries.length > 0 && !trace.subqueries.some((query) => query.includes('"'))) {
+		conditions.push({
+			id: "R3",
+			action: "refine_query",
+			observation:
+				`none of the ${trace.subqueries.length} subqueries used a quoted phrase, so every multi-word ` +
+				"concept was searched as separate terms.",
+			evidenceIds: searchIds.slice(0, 3),
+		});
+	}
+
+	// R4 - citation expansion absent, or attempted and uniformly failed. The second
+	// half is F-10's shape: two failed calls and the agent abandoned the route.
+	const expansions = callsOf(trace, "expand_citations");
+	const expansionIds = callIdsOf(trace, "expand_citations");
+	const failedExpansions = trace.calls.filter((call) => call.toolName === "expand_citations" && call.failed).length;
+	if (expansions === 0 && trace.evidence.length >= thresholds.minEvidenceBeforeExpansion) {
+		conditions.push({
+			id: "R4",
+			action: "expand_citation",
+			observation:
+				`${trace.evidence.length} papers found and expand_citations never called, so the citation graph ` +
+				"around them is untouched.",
+			evidenceIds: trace.evidence.slice(0, 3).map((item) => item.paperId),
+		});
+	} else if (expansions > 0 && failedExpansions === expansions) {
+		conditions.push({
+			id: "R4",
+			action: "expand_citation",
+			observation:
+				`all ${expansions} expand_citations call(s) failed, so the absence of citation edges is a fact ` +
+				"about the calls rather than about the literature.",
+			evidenceIds: expansionIds.slice(0, 3),
+		});
+	}
+
+	// R5 - one source is carrying everything, or one source keeps failing.
+	const sources = new Set(trace.evidence.flatMap((item) => item.sources));
+	const failuresBySource = new Map<string, number>();
+	for (const failure of trace.failures) {
+		const key = failure.source ?? "service";
+		failuresBySource.set(key, (failuresBySource.get(key) ?? 0) + 1);
+	}
+	const overFailing = [...failuresBySource.entries()].filter(
+		([, count]) => count >= thresholds.maxFailuresPerSource,
+	);
+	if (trace.evidence.length > 0 && sources.size <= 1) {
+		conditions.push({
+			id: "R5",
+			action: "add_source",
+			observation:
+				`every one of the ${trace.evidence.length} papers found came from ${[...sources][0] ?? "one source"}, ` +
+				"so coverage is one source's coverage.",
+			evidenceIds: trace.evidence.slice(0, 3).map((item) => item.paperId),
+		});
+	} else if (overFailing.length > 0) {
+		conditions.push({
+			id: "R5",
+			action: "add_source",
+			observation:
+				`${overFailing.map(([source, count]) => `${source} failed ${count} time(s)`).join("; ")}, so the gap ` +
+				"is operational rather than a fact about the literature.",
+			evidenceIds: searchIds.slice(0, 3),
+		});
+	}
+
+	// R6 - fetching without ever re-reading. Measured: 33 get_paper against 28
+	// search_metadata, zero rank_candidates.
+	const fetches = callsOf(trace, "get_paper");
+	if (searches > 0 && fetches / searches > thresholds.maxFetchPerSearchRatio && callsOf(trace, "rank_candidates") === 0) {
+		conditions.push({
+			id: "R6",
+			action: "rerank",
+			observation:
+				`${fetches} get_paper calls against ${searches} searches and no rank_candidates call, so the loop is ` +
+				"fetch-then-fetch: nothing has re-ordered what was already found.",
+			evidenceIds: callIdsOf(trace, "get_paper").slice(0, 3),
+		});
+	}
+
+	// R7 - the soft call budget is spent. Advisory only; nothing here enforces it.
+	if (trace.budget.totalCalls >= thresholds.softCallBudget) {
+		conditions.push({
+			id: "R7",
+			action: "stop",
+			observation:
+				`${trace.budget.totalCalls} tool calls against a soft budget of ${thresholds.softCallBudget}, so further ` +
+				"work is spending past the point this configuration expects.",
+			evidenceIds: [],
+		});
+	}
+
+	return conditions;
+}
+
+/**
+ * Render detected conditions for the Reviewer's prompt.
+ *
+ * Deliberately given as observations rather than as instructions. The detector
+ * says what the numbers are; whether that is worth a piece of advice, and what
+ * the advice should say, is the Reviewer's judgement - which is the only part of
+ * this design that a model is allowed to decide (`reviewer-design.md` §5.1).
+ */
+export function renderConditions(conditions: readonly DetectedCondition[]): string {
+	if (conditions.length === 0) {
+		return "DETECTED CONDITIONS\n\n  (none - no automatic check found anything to flag on this trace)";
+	}
+	const lines = ["DETECTED CONDITIONS", ""];
+	for (const condition of conditions) {
+		lines.push(`  ${condition.id} -> suggests ${condition.action}`);
+		lines.push(`     ${condition.observation}`);
+		if (condition.evidenceIds.length > 0) lines.push(`     citable: ${condition.evidenceIds.join(", ")}`);
+	}
+	lines.push(
+		"",
+		"These are measurements, not instructions. Advise on a condition only if you judge it to matter here, " +
+			"and say what you expect to change.",
+	);
+	return lines.join("\n");
+}
+
+/**
  * Render the trace for the Reviewer's prompt.
  *
  * This is the whole of what the Reviewer gets to see, so it is built from the
@@ -243,7 +521,13 @@ export function renderTraceForReviewer(
 			readonly failed: boolean;
 			readonly errorMessage: string | undefined;
 		}[];
-		readonly evidence: readonly { readonly paperId: string; readonly title: string; readonly foundBy: string }[];
+		readonly evidence: readonly {
+			readonly paperId: string;
+			readonly title: string;
+			readonly foundBy: string;
+			readonly abstractOpening?: string | null;
+			readonly year?: number | null;
+		}[];
 		readonly answerPool: {
 			readonly committed: number;
 			readonly withdrawn: number;
@@ -263,7 +547,12 @@ export function renderTraceForReviewer(
 			readonly message: string;
 		}[];
 	},
-	options: { readonly maxCalls?: number; readonly maxEvidence?: number } = {},
+	options: {
+		readonly maxCalls?: number;
+		readonly maxEvidence?: number;
+		/** What the detectors found. Rendered as measurements, never as instructions. */
+		readonly conditions?: readonly DetectedCondition[];
+	} = {},
 ): string {
 	const maxCalls = options.maxCalls ?? 40;
 	const maxEvidence = options.maxEvidence ?? 60;
@@ -310,11 +599,19 @@ export function renderTraceForReviewer(
 
 	lines.push("", `Evidence found (${trace.evidence.length}) - these ids are the only ones you may cite:`);
 	for (const item of trace.evidence.slice(0, maxEvidence)) {
-		lines.push(`  ${item.paperId} :: ${item.title.slice(0, 120)} (found by ${item.foundBy})`);
+		const year = typeof item.year === "number" ? ` ${item.year}` : "";
+		lines.push(`  ${item.paperId}${year} :: ${item.title.slice(0, 120)} (found by ${item.foundBy})`);
+		// The abstract opening is the §5.2c widening: coverage cannot be judged from
+		// titles alone, and a title is no more public than the abstract beside it.
+		if (typeof item.abstractOpening === "string" && item.abstractOpening !== "") {
+			lines.push(`      ${item.abstractOpening}`);
+		}
 	}
 	if (trace.evidence.length > maxEvidence) {
 		lines.push(`  ... ${trace.evidence.length - maxEvidence} more not shown; they are still valid ids`);
 	}
+
+	if (options.conditions !== undefined) lines.push("", renderConditions(options.conditions));
 
 	return lines.join("\n");
 }

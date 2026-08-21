@@ -30,6 +30,8 @@ export const COLLECTED_EVENTS = ["tool_execution_start", "tool_execution_end"] a
 const DEFAULT_MAX_CALLS = 200;
 const DEFAULT_MAX_ARG_CHARS = 2_000;
 const DEFAULT_MAX_EVIDENCE = 300;
+/** How much of an abstract a Reviewer gets. Enough to place a paper, not enough to grow with the corpus. */
+const DEFAULT_MAX_ABSTRACT_CHARS = 320;
 
 /** One tool call as the Reviewer sees it. */
 export interface TraceCall {
@@ -91,6 +93,26 @@ export interface TraceEvidence {
 	readonly sources: readonly string[];
 	/** Which tool call surfaced it, so a claim about coverage can be attributed. */
 	readonly foundBy: string;
+	/**
+	 * An opening slice of the abstract, and the year.
+	 *
+	 * This is the **one** widening of the allow-list that
+	 * `docs/reviewer-design.md` §5.2c approves, and the reason is specific: a
+	 * Reviewer judging coverage from titles alone cannot tell "eight papers about
+	 * superpixel segmentation" from "eight papers spanning three directions", and
+	 * that judgement is the whole point of the role.
+	 *
+	 * It passes §5.2c's test, which is about **which side of the filter a fact
+	 * comes from**, not about how much detail is allowed: an abstract is a tool
+	 * *result*, like the title next to it. What stays unreachable is unchanged -
+	 * anything the Main Agent thought and did not turn into a tool call.
+	 *
+	 * Bounded rather than whole: the trace must not grow with the corpus. Any
+	 * further widening goes back to §5.2c's table, item by item; "we widened it
+	 * last time" is not a reason.
+	 */
+	readonly abstractOpening: string | null;
+	readonly year: number | null;
 }
 
 /**
@@ -139,6 +161,7 @@ export interface TraceCollectorOptions {
 	readonly maxCalls?: number;
 	readonly maxArgChars?: number;
 	readonly maxEvidence?: number;
+	readonly maxAbstractChars?: number;
 }
 
 /**
@@ -236,7 +259,13 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
  * same paper should not keep growing the trace, and the *first* call that
  * surfaced a paper is the attribution a coverage claim needs.
  */
-function collectEvidence(details: unknown, toolCallId: string, into: Map<string, TraceEvidence>, max: number): void {
+function collectEvidence(
+	details: unknown,
+	toolCallId: string,
+	into: Map<string, TraceEvidence>,
+	max: number,
+	maxAbstractChars: number,
+): void {
 	if (!isRecord(details)) return;
 	const lists: unknown[] = [details.papers];
 	if (isRecord(details.paper)) lists.push([details.paper]);
@@ -247,6 +276,7 @@ function collectEvidence(details: unknown, toolCallId: string, into: Map<string,
 			if (!isRecord(entry)) continue;
 			const paperId = typeof entry.paperId === "string" ? entry.paperId : undefined;
 			if (paperId === undefined || paperId === "" || into.has(paperId)) continue;
+			const abstract = typeof entry.abstract === "string" ? entry.abstract.trim() : "";
 			into.set(paperId, {
 				paperId,
 				title: typeof entry.title === "string" ? entry.title : "",
@@ -254,6 +284,13 @@ function collectEvidence(details: unknown, toolCallId: string, into: Map<string,
 					? entry.sources.filter((item): item is string => typeof item === "string")
 					: [],
 				foundBy: toolCallId,
+				abstractOpening:
+					abstract === ""
+						? null
+						: abstract.length > maxAbstractChars
+							? `${abstract.slice(0, maxAbstractChars)}...`
+							: abstract,
+				year: typeof entry.year === "number" ? entry.year : null,
 			});
 		}
 	}
@@ -319,6 +356,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 	const maxCalls = options.maxCalls ?? DEFAULT_MAX_CALLS;
 	const maxArgChars = options.maxArgChars ?? DEFAULT_MAX_ARG_CHARS;
 	const maxEvidence = options.maxEvidence ?? DEFAULT_MAX_EVIDENCE;
+	const maxAbstractChars = options.maxAbstractChars ?? DEFAULT_MAX_ABSTRACT_CHARS;
 
 	// Keyed by tool-call id rather than pushed to an array: `start` and `end` for
 	// one call can arrive in either order, and both contribute to one record.
@@ -377,7 +415,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				const state = parseTraceSearchState(details);
 				if (state !== undefined) record.searchState = state;
 				if (observed.isError === true) record.errorMessage = errorMessageOf(observed.result);
-				collectEvidence(details, toolCallId, evidence, maxEvidence);
+				collectEvidence(details, toolCallId, evidence, maxEvidence, maxAbstractChars);
 				const pool = parseTraceAnswerPool(details, toolCallId, maxEvidence);
 				if (pool !== undefined) answerPool = pool;
 			}

@@ -11,7 +11,7 @@
 | F-1 arXiv 查询退化成 OR | DONE | `8bc69de` |
 | F-2 全部 provider 失败时丢弃原因 | DONE | `8bc69de` |
 | F-10 `expand_citations` 不接受其他工具的 id | DONE | `8bc69de` |
-| S10 答案池与召回评测回路 | TODO | |
+| S10 答案池与召回评测回路 | DONE† | `599f351`（判据 4 后半缺口 → G-6） |
 | S11 Reviewer v0 与 $NP_0$ 重写 | TODO | |
 | S12 $NP^{judge}$ 载体与 L3b 判别层 | TODO | |
 
@@ -170,3 +170,147 @@ intersection: []
 - **池子是一次性批量写入的**（14 篇全在同一个 `call_3fd4892d...` 里，
   时间戳跨 26 秒）。`plan.md` §3.8 第二条预告的是"过早承诺"，实测到的是相反的
   "最后一次性承诺"。观察量（首次写入时刻）已经在记录里，留给 P 轴。
+
+## 6. S11 的决策
+
+| 日期 | 在哪 | 选了什么 | 理由 | 影响面 |
+| --- | --- | --- | --- | --- |
+| 2026-08-21 | `index.ts` `ensureReviewer` | 附着有两个入口（`agent_spawned` + 该 agent 的首个 `tool_execution_end`），都先做同步声明 | 只挂 `agent_spawned` 假设了"这个事件会到达一个能对它动手的 activation"，而 extension 是按 agent activate 的 | **实验对照** → D-20 |
+| 2026-08-21 | `index.ts` `scheduleReview` | 按 subject 串行化（一在飞 + 一排队），超出的记进 `review.json` 的 `journal` 而不是 gate 的 `refusals` | gate 的拒绝是关于**建议**的，这里被拒的是一次**投递**；混在一起会让两种情况看起来一样 | **实验对照** → D-21 |
+| 2026-08-21 | `index.ts` journal | 每条记录带 `atCall` / `atSearch` | 判据 2 问的是"投递是否早于最后一次 `search_metadata`"，墙钟时间答不了，调用序列里的位置才能 | **实验对照** → D-21 |
+| 2026-08-21 | `core/review.ts` | 七个检测器读一个结构化子集 `DetectorTraceView` 而不是整个 `PublicSearchTrace` | 检测器只需要计数与查询串；收窄入参让它们能脱离真实轨迹单测 | 只影响检测器 |
+| 2026-08-21 | `core/review.ts` `FALLBACK_THRESHOLDS` | extension 侧留一份占位阈值，但 Service 的值优先 | 没有 Service 时模块要能跑（单测）；同时不能让 extension 成为阈值的作者（D-15） | 只影响检测器默认值 |
+| 2026-08-21 | `api/review.py` | 端点返回**开放 map** 而不是命名字段 | 加一个检测器就要加一个阈值，闭合 schema 会把它变成跨两种语言的协同改动 | **实验对照**（`/review-config` 的响应形状） |
+| 2026-08-21 | `np-agent.md` | `observable:` 元数据写在注入文件里，agent 看得到 | 本仓库没有"不被注入的元数据"这个位置；且在这里 Goodhart 就是执行 | **实验对照** → D-22 |
+| 2026-08-21 | commit 划分 | S11 分两个 commit（代码 / `[NP v2]`） | `preference/README.md` 的版本约定与"一个 stage 一个 commit"直接冲突，前者的可回放性一旦破坏无法补救 | 只影响提交历史 → D-23 |
+| 2026-08-21 | `rpc-client.mjs` | `RUNNER_VERSION` 1 → 2（S10 遗漏，本次补） | `run.json` 加了 `agentId` / `gold` / `traceDir`，记录格式变了却不升版本，正是 D-09 记下的那个模式 | **实验对照** → D-19 |
+
+## 7. S11 的验收记录
+
+```bash
+SCHOLAR_REVIEWER=1 SCHOLAR_REVIEWER_MODEL=vllm/qwen3.6-35b-a3b \
+  node experiments/eval-runner/run.mjs --queries runs/eval/s11-accept/queries.json \
+  --model vllm/qwen3.6-35b-a3b --out runs/eval/s11-accept --deadline-ms 540000
+```
+
+一条查询（`AutoScholarQuery_train_1`），38 次工具调用，304 秒。
+`callsByTool = {list_providers:1, search_metadata:19, get_paper:13, update_answer_pool:3, expand_citations:2}`。
+
+### 判据 1 — k9u1 轨迹喂给检测器，R1 / R3 / R6 必须触发 ✅
+
+`tests/detectors.test.ts`。**轨迹本身不在仓库里**（`runs/` 被 gitignore），
+fixture 是按 `../reviewer-design.md` §2.1/§2.2 原文记录的计数重建的：
+64 次调用、`get_paper` 33、`search_metadata` 28、`expand_citations` 2、
+`list_providers` 1，`facet_probe`/`rank_candidates`/`search_fulltext` 为 0，
+30 条查询无一条带引号。**这是重建而不是回放**，测试文件里写明了这一点。
+三条全部触发，且观察文本里带原始数字（28、33）。
+
+### 判据 2 — 至少一条建议的投递早于最后一次 `search_metadata` ✅
+
+```
+journal（触发源 @ 位置 -> 是否投递）
+  attach                              reviewer-pc2i attached
+  detector R4    atCall=5   atSearch=3   delivered
+  detector R1    atCall=10  atSearch=5   delivered
+  answer_pool R1+R4  atCall=27 atSearch=15 delivered
+  answer_pool R1     atCall=33 atSearch=17 delivered
+  answer_pool R1     atCall=37 atSearch=18 delivered
+
+delivered（建议 -> 落点）
+  organize_answer            atCall=4   atSearch=2
+  refine_query               atCall=10  atSearch=5
+  expand_citation            atCall=27  atSearch=15
+```
+
+第一条建议在第 2 次检索之后投递，而 episode 一共 19 次检索。
+**$A_t$ 里的 $t$ 不再恒等于 $T+1$**，G-1 关闭。
+
+### 判据 3 — gate 的拒绝记录里能看到检测器重复触发被挡下 ⚠️ 实质满足，字面不满足
+
+实测拒绝：`duplicate_action_target` ×1、`unknown_evidence` ×3、`repeated_no_action` ×1。
+括号里的性质（**检测器接在 gate 之内，没有绕过**）由此确立，而且
+`unknown_evidence` 那三条格外有力：Reviewer 编了三个不在轨迹里的 id，
+全被挡下——说明它除了轨迹之外确实什么都没有。
+
+**字面上没满足的是"被 novelty key 挡下"**：这次 Reviewer 重复的那条
+`organize_answer` 换了 novelty key 但动作与 target 相同，
+于是先撞上 `duplicate_action_target`（gate 的检查顺序是 episode 上限 → novelty key
+→ action|target）。`duplicate_novelty_key` 这条路径有单测覆盖
+（`review.test.ts:98`），但**这次真实运行里没有走到**。
+按 `plan.md` §8 记进 `backlog.md` 的验收缺口 G-7，不改判据。
+
+### 判据 4 — 一个 episode 三次以上 review，Main 收到的建议没有一条重复 ✅
+
+5 次投递（2 次检测器 + 3 次答案池），3 条建议放行并投递，
+`3 unique of 3`——没有重复。这一条直接验证了 §5.2d 那个坑被修掉：
+若还按 `gate.admitted()` 全量投递，第三次会把前两条再投一遍。
+
+### 判据 5 — 只为 `profile.id === "search"` 配 Reviewer，一个 episode 恰好一个 ✅
+
+`journal` 里 `attach` 恰好一条，`reviewerAgentId` 六轮不变（`reviewer-pc2i`）。
+预算探测那个 agent（`search-9oig`）也是 `search` profile，它各自配了一个——
+"每个 search agent 一个"是设计要求（§5.2b 第三条），不是重复。
+
+### 判据 6 — 绑定组每条都能指出它对应 $\bar{\tau}_t$ 的哪个字段 ✅
+
+A 组 7 条，逐条对应：`callsByTool.facet_probe`（probe-before-second-round）、
+`subqueries` 含引号数（phrase-and-keyword-both）、首轮 `subqueries` 的 Jaccard
+（cover-two-readings-first）、`filters.end_date`（carry-the-date-boundary）、
+`callsByTool.get_paper` 对 `search_metadata` 与 `rank_candidates`（reread-before-refetch）、
+`answerPool` 首次写入时刻（commit-incrementally）、`answerPool.removed[].reason`
+（withdraw-with-reason）。七条全部满足 D-12 的判据：关掉它，轨迹会不同。
+
+B 组 30 条各自标了 `observable: none` 与原因，归成三类
+（工具入参里没有对应概念 / 约束的是判断而非动作 / 依赖尚不存在的观察量）。
+
+### 判据 7 — lint 能拦下一条含 arXiv id 的条目 ✅
+
+```
+$ node scripts/preference-lint.mjs
+widis\.widi-scholar\preference\np-agent.md:285: arXiv id 'arXiv:1810.09726' must not appear
+    in a preference entry - NP_k is strategy reused across episodes, and a paper identifier
+    in it is one question's answer.
+preference-lint: 1 file(s) checked, 1 finding(s)   exit=1
+```
+
+（临时插入一条再删除；干净状态下 0 finding，exit 0。已挂进 `npm run check`。）
+
+### 判据 8 — TUI 里能切到 Reviewer 对话，且上下文里没有 Main 的私有推理 ⚠️ 一半
+
+**隔离那一半有机械证据**：Reviewer 的输入完全由 `renderTraceForReviewer(trace)`
+构造，而 `PublicSearchTrace` 是白名单过滤的产物；`review.test.ts` 有一条测试
+往 trace 上塞一个额外字段并断言它渲染不出来。运行侧最有力的证据是那三条
+`unknown_evidence`——Reviewer 引了三个不在轨迹里的 id，说明它手上除了轨迹之外
+没有别的东西。
+
+**TUI 交互那一半没验**：本次推进全程走 RPC，无法驱动全屏 TUI，
+也就无法执行 S8 那种"切过去、逐片段 grep、leaks = 0"的过程。
+记进 `backlog.md` 的 G-8。
+
+### 一条必须写下来的观察：sidecar 有作用面，而这次它把方向推错了
+
+召回仍是 **0/4**（k=20，池中 11 篇）。判据本身不检验这个——
+`plan.md` §4.2 写明"判据 2 只验'有机会被读到'，不验'读了之后变好了'"。
+但**行为确实变了**，而且变化方向值得记：
+
+| | S10 那次（无 Reviewer） | S11 这次（有 Reviewer） |
+| --- | --- | --- |
+| `update_answer_pool` | 1 次批量写 14 篇 | **3 次增量写**，共 11 篇 |
+| `expand_citations` | 0 次 | **2 次** |
+| 召回 | 0/4 | 0/4 |
+
+前两行是 R4 与 `organize_answer` 的直接后果——三次会话里从未被调用过的
+引文扩展，这次被建议之后调用了。
+
+而第二条建议是：
+
+> Drop "region proposal" and "image patches" from the subqueries. …
+> Restrict searches to superpixel aggregation, boundary-aware segmentation …
+
+**这条建议把检索推得更深地进入了那个错误的方向。** 原问句里的
+"image patches" 是提问者自己的用词，而 Reviewer 判断它是噪声。
+Reviewer 看不到 gold，这个判断在它掌握的信息下是合理的；
+但它说明了一件对 M 轴很重要的事：**一个只看轨迹的观察者会强化候选集里已有的主题分布**，
+因为"这批结果不够聚焦"和"这批结果聚焦错了"在轨迹上长得一样。
+这不是本 stage 的验收对象，但它是 $\Delta_{\mathrm{sidecar}}$ 可能为负的一条具体机制，
+应当进 `../experiments.md` 的 M 轴假设。

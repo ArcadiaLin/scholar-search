@@ -46,6 +46,7 @@ from search_service.schemas.responses import (
     PaperResponse,
     ProviderInfo,
     RankResponse,
+    ReviewConfigResponse,
     SearchResponse,
 )
 from search_service.schemas.state import (
@@ -88,6 +89,7 @@ __all__ = [
     "RankResponse",
     "RankedPaper",
     "ReliabilityProfile",
+    "ReviewConfigResponse",
     "SearchRequest",
     "SearchResponse",
     "SearchState",

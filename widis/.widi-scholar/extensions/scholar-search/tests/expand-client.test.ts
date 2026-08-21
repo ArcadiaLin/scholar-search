@@ -304,6 +304,42 @@ describe("getBudget", () => {
 	});
 });
 
+describe("getReviewConfig", () => {
+	it("reads the detector thresholds and the provenance the service states", async () => {
+		// The thresholds are $HP_k$ and the service is their author; the extension is
+		// not allowed to be (`docs/develop/decisions.md` D-15). Called once per episode.
+		const scope = arrange(() => ({
+			status: 200,
+			body: JSON.stringify({
+				thresholds: { subquery_jaccard_ceiling: 0.5, soft_call_budget: 40 },
+				provenance: "config.yaml `review:` section; values are placeholders",
+			}),
+		}));
+		const result = await clientFor(scope).getReviewConfig();
+
+		assert.equal(scope.calls()[0]?.method, "GET");
+		assert.equal(scope.calls()[0]?.path, `/${scope.name}/review-config`);
+		assert.equal(result.thresholds.subquery_jaccard_ceiling, 0.5);
+		// Reported rather than dropped: a threshold nobody derived is worth less than
+		// one that was, and only the provenance says which this is.
+		assert.match(result.provenance, /placeholder/);
+	});
+
+	it("drops a non-numeric threshold rather than passing it through", async () => {
+		const scope = arrange(() => ({
+			status: 200,
+			body: JSON.stringify({ thresholds: { soft_call_budget: "forty" }, provenance: "x" }),
+		}));
+		const result = await clientFor(scope).getReviewConfig();
+		assert.deepEqual(result.thresholds, {});
+	});
+
+	it("says the provenance is not stated rather than inventing one", async () => {
+		const scope = arrange(() => ({ status: 200, body: JSON.stringify({ thresholds: {} }) }));
+		assert.equal((await clientFor(scope).getReviewConfig()).provenance, "not stated");
+	});
+});
+
 describe("rankCandidates candidate translation", () => {
 	// The bug this guards: the agent holds `PaperSummary` records, because that is
 	// what every other tool handed it, while /rank validates the service's

@@ -28,6 +28,41 @@ limits:
     max_sections: 20
     max_section_chars: 2000
 
+# Sidecar Reviewer detector thresholds (HP_k). Read by the scholar-search
+# extension through GET /review-config, once per episode.
+#
+# They live here rather than in the extension's environment because they are
+# HP_k, and config.yaml is the only authoritative carrier of HP_k - the edge
+# theta^S_k = Configure(P, HP_k, NP_k^judge) starts here. Scattered across
+# environment variables there would be nothing for an HP search to vary
+# (docs/develop/decisions.md D-15).
+#
+# The detector *logic* deliberately stays in the extension: a detector reads
+# PublicSearchTrace, an extension-side type assembled from WIDI's event stream,
+# and mirroring that schema in Python would bind this service to WIDI's event
+# shape. Thresholds are data and cheap to send; a trajectory is structure and
+# would cost a duplicated schema.
+#
+# None of these numbers is derived from anything. They are placeholders that make
+# the detectors runnable, and fixing them is the HP search's job
+# (docs/reviewer-design.md §8, third risk).
+review:
+  # R1 - never probed the distribution.
+  min_searches_before_facet_probe: 3
+  # R2 - monotonous queries: pairwise Jaccard at or above this counts as "the
+  # same question asked twice". 0.5 has no basis; it is a running value.
+  subquery_jaccard_ceiling: 0.5
+  min_subqueries_for_monotony: 2
+  # R4 - expansion absent while there is plenty to expand from.
+  min_evidence_before_expansion: 10
+  # R5 - source imbalance.
+  max_failures_per_source: 3
+  # R6 - fetching without ever re-reading: get_paper per search_metadata.
+  max_fetch_per_search_ratio: 1.0
+  # R7 - budget nearly spent. A soft ceiling on tool calls, not a hard bound:
+  # nothing enforces it, it only makes the Reviewer say so.
+  soft_call_budget: 40
+
 # LLM providers for the /judge forwarding endpoint. Keys are arbitrary names;
 # the endpoint selects one by name or falls back to ``default``.
 #

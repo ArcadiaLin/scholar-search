@@ -128,3 +128,16 @@ class BudgetResponse(BaseModel):
     quotas: dict[str, Any] = Field(default_factory=dict, description="Per-provider cost model and declared quotas.")
     spent: dict[str, int] = Field(default_factory=dict, description="Provider calls this process has issued, by endpoint.")
     scope: str = Field(default="process", description="Scope of `spent`. 'process' until an Evidence Store exists.")
+
+
+class ReviewConfigResponse(BaseModel):
+    """The Sidecar Reviewer's detector thresholds ($HP_k$).
+
+    Returned as an open map rather than as named fields: a detector added later
+    needs a threshold added here, and a closed schema would make that a
+    coordinated change across two languages for no gain. The extension reads the
+    keys it knows and reports the ones it does not.
+    """
+
+    thresholds: dict[str, Any] = Field(default_factory=dict, description="Detector thresholds in force (HP_k).")
+    provenance: str = Field(description="Where these values come from, and how much they are worth.")

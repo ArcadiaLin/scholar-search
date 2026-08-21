@@ -431,9 +431,13 @@ describe("the trace carries citable evidence", () => {
 		assert.equal(trace.snapshot().evidence.length, 3);
 	});
 
-	it("does not turn an abstract into evidence", () => {
-		// Identity and title only. A trace carrying abstracts would grow with the
-		// corpus, which is the thing the summary view exists to prevent.
+	it("carries a bounded opening of the abstract, and the year", () => {
+		// This inverts what this test asserted before S11, and deliberately: it is
+		// the one widening of the allow-list `docs/reviewer-design.md` §5.2c approves.
+		// A Reviewer judging coverage from titles alone cannot tell eight papers on
+		// one topic from eight papers spanning three, and that judgement is the role.
+		// An abstract is a tool *result*, which is the side of the filter §5.2c's
+		// table puts on the public side.
 		const trace = collector();
 		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
 		trace.record({
@@ -441,11 +445,48 @@ describe("the trace carries citable evidence", () => {
 			toolCallId: "c1",
 			toolName: "search_metadata",
 			result: resultWithPapers([
-				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "a very long abstract indeed" },
+				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "region-based active learning", year: 2018 },
 			]),
 			isError: false,
 		});
 
-		assert.ok(!JSON.stringify(trace.snapshot().evidence).includes("very long abstract"));
+		const evidence = trace.snapshot().evidence[0];
+		assert.equal(evidence?.abstractOpening, "region-based active learning");
+		assert.equal(evidence?.year, 2018);
+	});
+
+	it("bounds the abstract it carries", () => {
+		// Bounded is the whole basis on which the widening is acceptable: a trace
+		// carrying whole abstracts would grow with the corpus, which is what the
+		// summary views exist to prevent.
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([
+				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "x".repeat(5_000) },
+			]),
+			isError: false,
+		});
+
+		const opening = trace.snapshot().evidence[0]?.abstractOpening ?? "";
+		assert.ok(opening.length < 400, `abstract opening was ${opening.length} chars`);
+		assert.ok(opening.endsWith("..."), "a truncation the reader cannot see is one they will reason past");
+	});
+
+	it("reports a missing abstract as null rather than as an empty string", () => {
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([{ paperId: "10.1/a", title: "A Paper", sources: [] }]),
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().evidence[0]?.abstractOpening, null);
 	});
 });

@@ -8,6 +8,7 @@ from search_service.api.judge import router as judge_router
 from search_service.api.paper import router as paper_router
 from search_service.api.probe import router as probe_router
 from search_service.api.providers import router as providers_router
+from search_service.api.review import router as review_router
 from search_service.api.search import router as search_router
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "paper_router",
     "probe_router",
     "providers_router",
+    "review_router",
     "search_router",
 ]

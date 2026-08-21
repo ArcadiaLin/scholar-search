@@ -247,6 +247,7 @@ export interface ServiceClient {
 	rankCandidates(input: RankInput, options?: { signal?: AbortSignal }): Promise<RankResult>;
 	searchFulltext(input: FulltextInput, options?: { signal?: AbortSignal }): Promise<FulltextResult>;
 	getBudget(options?: { signal?: AbortSignal }): Promise<BudgetResult>;
+	getReviewConfig(options?: { signal?: AbortSignal }): Promise<ReviewConfigResult>;
 }
 
 export interface ExpandInput {
@@ -337,6 +338,19 @@ export interface BudgetResult {
 	readonly spent: Readonly<Record<string, number>>;
 	/** `process` until an episode-scoped Evidence Store exists. Reported, not assumed. */
 	readonly scope: string;
+}
+
+/**
+ * The Reviewer's detector thresholds, as the service reports them.
+ *
+ * An open map rather than named fields, matching the endpoint: a detector added
+ * later needs a threshold added, and a closed type here would make that a
+ * coordinated change across two languages. The caller reads the keys it knows.
+ */
+export interface ReviewConfigResult {
+	readonly thresholds: Readonly<Record<string, number>>;
+	/** Where the values came from, and how much a tuned one is worth. Reported, not assumed. */
+	readonly provenance: string;
 }
 
 export interface ServiceClientOptions {
@@ -995,6 +1009,19 @@ export function createServiceClient(options: ServiceClientOptions): ServiceClien
 				// Reported rather than assumed: the service says whether this is an
 				// episode's spend or the process's, and today it is the process's.
 				scope: typeof payload.scope === "string" ? payload.scope : "unknown",
+			};
+		},
+
+		async getReviewConfig(callOptions) {
+			// Same shape as `getBudget`, and for the same reason: these are
+			// service-side configuration, and the extension is not their author
+			// (`docs/develop/decisions.md` D-15). Called once per episode.
+			const url = `${baseUrl}/review-config`;
+			const payload = await requestJson(url, { fetch: fetchImpl, timeoutMs, retries, signal: callOptions?.signal });
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			return {
+				thresholds: numberMap(payload.thresholds),
+				provenance: typeof payload.provenance === "string" ? payload.provenance : "not stated",
 			};
 		},
 	};

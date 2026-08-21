@@ -9,7 +9,7 @@
 | | 是什么 | 编号 | 位置 |
 | --- | --- | --- | --- |
 | **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-11` | 前半篇 |
-| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-6` | 后半篇 |
+| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-8` | 后半篇 |
 
 编号避开已被占用的 `D-`（决策，见 `decisions.md`）、`U-`（上游缺陷）、
 `SV-`（Service 缺陷）、`E-`（环境）——后三类在 `history.md`。
@@ -638,7 +638,7 @@ E 轴（引文扩展）在当前实现下没有测量对象。
 
 ---
 
-## 验收缺口 G-1..G-6
+## 验收缺口 G-1..G-8
 
 这一节记的是"**stage 验收通过、但设计要求尚未满足**"的部分。
 
@@ -730,6 +730,47 @@ WIDI revision、profile、模型、extension 版本、生效预算、启动诊�
 **后果**：S5 那张对照表无法在仓库内一键复现；将来任何用 S9 跑出来的数字同样如此。
 
 **补上它需要**：见 `history.md` 的 **U-03**。三条路径互斥，需要用户拍板选一条。
+
+### G-7 — S11 判据 3 的"被 novelty key 挡下"在真实运行里没走到（S11）
+
+**判据原文**：gate 的拒绝记录里能看到检测器重复触发被 **novelty key** 挡下的条目
+（说明检测器接在 gate 之内，没有绕过）。
+
+**实际实现**：括号里那条性质**成立且有充分证据**——一次真实 episode 的拒绝记录是
+`duplicate_action_target` ×1、`unknown_evidence` ×3、`repeated_no_action` ×1。
+其中三条 `unknown_evidence` 尤其有力：Reviewer 引了三个不在轨迹里的 id，全被挡下。
+
+**没走到的是那条具体路径**：Reviewer 重复的那条 `organize_answer` 换了 novelty key
+但动作与 target 相同，于是先撞上 `duplicate_action_target`
+（gate 的检查顺序是 episode 上限 → novelty key → action|target）。
+`duplicate_novelty_key` 有单测（`review.test.ts:98`），但没有真实运行的样本。
+
+**为什么记成缺口而不是"实质等价"**：这两条规则挡的是不同的东西。
+novelty key 挡的是"同一个意思换个说法"，action|target 挡的是"同一个动作对同一个对象"。
+一个换了 novelty key 就能重发的 Reviewer，在 target 不同时能绕过 action|target 那条——
+而这次运行没有覆盖到那种情形。**它是否真的挡得住，目前只有单测作证。**
+
+**补上它需要**：一次 Reviewer 用同一个 novelty key 重发、或 target 不同而语义重复的
+真实运行。可以在下一次 M 轴运行里顺带观察，不需要单独的工作项。
+
+### G-8 — S11 判据 8 的 TUI 交互半边未验（S11）
+
+**判据原文**：TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
+**没有** Main 的私有推理（沿用 S8 的逐片段查证方法，leaks = 0）。
+
+**已验的一半**：隔离。Reviewer 的输入完全由 `renderTraceForReviewer(trace)` 构造，
+`PublicSearchTrace` 是白名单过滤的产物，且有一条测试往 trace 上塞额外字段并断言
+渲染不出来。运行侧最有力的证据是三条 `unknown_evidence` 拒绝。
+
+**未验的一半**：**切过去对话这个动作本身**。本次推进全程走 RPC，
+无法驱动全屏 TUI，因此 S8 那套"切过去、逐片段 grep、leaks = 0"的过程没有执行。
+D-10 把"用户能直接与 Reviewer 对话"列为常驻化的第二条理由
+（人工 review 是 $NP_0$ 的种子来源），所以这不只是一个演示步骤，
+它是那条决策的作用面。
+
+**补上它需要**：一次交互式 `npm run widi:scholar`，`SCHOLAR_REVIEWER=1`，
+在 agent strip 里切到 reviewer、问它一个问题、并按 S8 的方法抽片段查证。
+**需要人在 TUI 前**，无法自动化。
 
 ### G-6 — S10 判据 4 的后半只由单测证明，没有活的 Reviewer 读过池子（S10）
 
