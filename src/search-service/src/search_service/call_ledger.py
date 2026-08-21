@@ -5,7 +5,7 @@ rather than an estimate.
 
 The scope is the **process**, not an episode. Per-episode accounting needs the
 episode-scoped Evidence Store, which does not exist yet
-(``docs/07-widi-mapping.md`` §3.2), and reporting a process counter as if it were
+(``docs/develop/mapping.md`` §3.2), and reporting a process counter as if it were
 an episode's spend would make a long-running service look like a single expensive
 search. ``scope`` is part of the response for exactly that reason.
 """

@@ -2,12 +2,16 @@
 
 > 状态：对照表，随实现推进而更新
 > 读者：要在这个仓库里找到某个设计概念的实际位置的人
-> 前置：`design.md`（形式化）、`search-service.md`（Service 契约）、
-> `prototype.md`（原型形态）、`06-widi-scholar-roadmap.md` §1.2（映射摘要）
+> 前置：`../design.md`（形式化）、`../search-service.md`（Service 契约）、
+> `../prototype.md`（原型形态）
 
-`06-widi-scholar-roadmap.md` §1.2 给了一张五行的摘要表。本文是它的展开版：
-每个概念的**实际文件路径**、**为什么这样映射**，以及——同样重要——
-**哪些概念故意没有对应的代码模块**。
+**这是"某个设计概念的代码在哪"的查找表。** 每个概念的实际文件路径、
+为什么这样映射，以及——同样重要——**哪些概念故意没有对应的代码模块**（§4）。
+
+设计文档里的四个模块是**行为抽象，不是目录结构**。
+不要为了对齐概念而造目录：Preference Persistence 不需要一个 `preference/`
+代码模块，它就是一个 markdown 文件加 profile 的 `projectContext` 引用。
+判据统一是 `AGENTS.md` §3.2——只有出现真实复用点时才抽象公共模块。
 
 ---
 
@@ -25,11 +29,11 @@
 | Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地（G-2） |
 | $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地 |
 | Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S8 通道已通；介入时机偏在 episode 之后（G-1） |
-| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `09-next-stages.md` S12 |
+| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `plan.md` S12 |
 | Service 侧 LLM worker | `llm/` provider 抽象 + `POST /judge` | `src/search-service/src/search_service/llm/` | 传输层已落地（`aac617c`）；判别策略层未落地 |
-| $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | 无载体 | 未落地，见 `09-next-stages.md` S10 |
+| $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | 无载体 | 未落地，见 `plan.md` S10 |
 
-"状态"列是**当下**的实话，不是计划。路线图的 stage 状态在 `06-progress.md`；
+"状态"列是**当下**的实话，不是计划。stage 状态在 `history.md`，缺口在 `backlog.md`；
 `G-n` 指向该文件的"验收缺口"一节——那里记的是 stage 验收已通过、
 但本表所述的设计要求尚未满足的部分。
 
@@ -44,7 +48,7 @@
 这正是 §3 要求的"$T^M$ 是依据 $\theta^S_k$ 生成的受约束工具视图"在 WIDI 上的形态。
 
 `tools:` 里只有四个检索工具，**没有** `bash` / `write` / `edit`。
-这不是权限偏好而是架构必需，理由在 `05-skill-decomposition.md` §0：
+这不是权限偏好而是架构必需，理由在 `../skill-decomposition.md` §0：
 有 coding 能力就无法强制预算与 `end_date`，且 agent 在代码里做的事不进 $\bar{\tau}_t$。
 一个能写 Python 去 `curl` 的 agent，它的检索行为对 Reviewer 是不可见的。
 
@@ -53,7 +57,7 @@
 `extensions/scholar-search/index.ts` 里每个工具一次 `registerTool`，
 检索逻辑在 `core/` 下作为纯函数。工具**不按数据源拆分**：
 `provider_query` 是单一工具、provider 作枚举参数。
-理由见 `search-service.md` §2.1——按源拆开会让"新增一个源"变成"修改工具集"，
+理由见 `../search-service.md` §2.1——按源拆开会让"新增一个源"变成"修改工具集"，
 而统一工具加运行时能力表只需要注册一条记录。
 
 ### 2.3 $SP_M$ 的静态/动态切分 = profile body / `projectContext`
@@ -66,12 +70,12 @@
 判据很简单：**Reviewer 能改写的东西不能写进 profile body。**
 profile 是提交进仓库的静态文件，Reviewer 在运行时改不动它；
 一旦"先分解子查询再检索"这类策略写进了 body，它就脱离了 $PH_k$ 的管辖，
-`prototype.md` §7.3 约束一（策略先验必须有可作用的载体）随之失效，
+`../prototype.md` §7.3 约束一（策略先验必须有可作用的载体）随之失效，
 S5 的消融实验也就测不出东西——关掉全部条目，轨迹形状不变。
 
-具体切在哪里，`06-progress.md` 的 S3 条目里有逐项清单。
+具体切在哪里，`history.md` 指向的 S3 执行日志里有逐项清单（git 历史）。
 两个看起来像策略、实际归入协议的例外，也在那里给了依据：
-`provider_query` 前置 `list_providers`（接口契约，`prototype.md` §7.1 末段明说
+`provider_query` 前置 `list_providers`（接口契约，`../prototype.md` §7.1 末段明说
 "前置探查是接口契约而非策略判断"），以及 `end_date` 必须携带
 （评测契约与治理约束，不是"检索得好不好"的判断）。
 
@@ -93,7 +97,7 @@ $PH_k$ 在形式化里是"跨 episode 的偏好状态"，很容易读成"需要�
    `git show <commit>:<path>`，不是一个自建的版本表。`AGENTS.md` §3.2 明确
    "只有出现真实复用点时才抽象公共模块，禁止预建无调用方的框架"。
 3. **一个模块会把它变成不可审计的。** $PH_k$ 的价值在于人能读、能逐条改、
-   能逐条关掉（`prototype.md` §7.3）。markdown 文件加 git diff 直接就是这个界面。
+   能逐条关掉（`../prototype.md` §7.3）。markdown 文件加 git diff 直接就是这个界面。
    一旦经过代码序列化，"第 3 版和第 4 版差在哪"就要靠工具才能回答。
 
 会需要代码的只有一处：$SI_k = \mathrm{Compose}(RQ, NP_k^{agent})$ 的注入点，
@@ -111,7 +115,7 @@ $\theta^S_k$ 是"Service 侧的可调参数"。它在 WIDI 上没有单一载体
 
 - **不由 Agent 决定的**（凭据、限流、退避、每源配额、成本口径）在
   `src/search-service/config.yaml`，Agent 既不持有也不感知
-  （`prototype.md` §7.1 末段）。
+  （`../prototype.md` §7.1 末段）。
 - **由 Agent 每次调用决定的**（`top_k`、`end_date`、`sources`、`judge_level`）
   是工具入参。
 
@@ -122,19 +126,19 @@ $\theta^S_k$ 是"Service 侧的可调参数"。它在 WIDI 上没有单一载体
 
 **当前缺口**：`config.yaml` 里还没有"按 $\theta$ 禁用某个字段"的开关，
 所以 `list_providers` 返回的字段集目前等于 provider 的全集，不是"当前 $\theta$ 下
-实际可用的子集"。`prototype.md` §7.1 要求的是后者。这是 S7 之后的事，记在这里免得被当成已完成。
+实际可用的子集"。`../prototype.md` §7.1 要求的是后者。这是 S7 之后的事，记在这里免得被当成已完成。
 
 ### 3.2 Evidence Store 为什么在 Python 侧而不是 extension 侧
 
 这是本文要显式回答的第二个问题。
 
 跨工具调用积累候选是检索的固有需求：$t$ 步召回的论文要在 $t+3$ 步参与引文扩展
-与排序。承载它的状态放哪一侧，`design.md` §4.1 已经给了三条界定，
+与排序。承载它的状态放哪一侧，`../design.md` §4.1 已经给了三条界定，
 落到 WIDI 上就只有一个答案：**Service 侧**。
 
 1. **放 extension 侧会把候选集搬进 Agent 的进程边界。**
    extension 与 Agent 同进程，它持有的候选集迟早会被格式化进工具输出——
-   而 `design.md` §4.1 的第一条要求正是"Agent 不在上下文里搬运候选集"。
+   而 `../design.md` §4.1 的第一条要求正是"Agent 不在上下文里搬运候选集"。
    S2 的 `PaperSummary` 就是为此存在：它刻意丢掉 `raw`、`field_provenance`、
    `references`、`citations`、`counts_by_year`。这些字段必须有地方存，
    而那个地方不能是 extension。
@@ -146,7 +150,7 @@ $\theta^S_k$ 是"Service 侧的可调参数"。它在 WIDI 上没有单一载体
    把 Evidence Store 的账目挂在同一个结构上是自然的；放 extension 侧则要
    再造一条上报通道。
 
-一个容易误读的点：`design.md` §4 说"Service 不持有独立状态"，
+一个容易误读的点：`../design.md` §4 说"Service 不持有独立状态"，
 指的是**跨 episode 的决策状态**，不是禁止在一次 episode 内累积证据。
 Evidence Store 与 `RunSnapshot` 同生共死，episode 结束即销毁。
 跨 episode 的记忆只有一个合法载体，即 $PH_k$（见 §2.4）。
@@ -157,7 +161,7 @@ Evidence Store 与 `RunSnapshot` 同生共死，episode 结束即销毁。
 
 ### 3.3 $\bar{\tau}_t$：两侧各出一半
 
-`design.md` §5.1 定字段边界，`search-service.md` §5.3 定内容契约。落到 WIDI：
+`../design.md` §5.1 定字段边界，`../search-service.md` §5.3 定内容契约。落到 WIDI：
 
 - **Service 侧**产出发现溯源与过程账目。这部分**已经有了**：
   `SearchState`（`issued_queries` / `selected_sources` / `filters` /
@@ -181,7 +185,7 @@ Reviewer 看得见 Main 的推理，$C^R_t \neq C^M_t$ 就名存实亡了。
 - $C^R_t \neq C^M_t$ 是**硬机制**。Reviewer 必须是独立 agent runtime，
   只吃 $\bar{\tau}_t$，不共享 Main 的上下文。
 - Reviewer 是**旁路观察者，不是被调用方**。Main 不能主动向它求助——
-  那会使介入率成为内生变量并破坏 $\Delta_{\mathrm{sidecar}}$ 的归因（`design.md` §3）。
+  那会使介入率成为内生变量并破坏 $\Delta_{\mathrm{sidecar}}$ 的归因（`../design.md` §3）。
 
 于是：
 
@@ -208,7 +212,7 @@ Main 全程没有它的 handle：`profiles/search.md` 的 `tools:` 里没有
   既不可复现也不可审计。而 $C^R_t \neq C^M_t$ 恰恰需要它**是**一个有自己 session
   的 agent 才能被证明。
 
-在线工具集见 `prototype.md` §7.2；**离线的六个工具在 held-out 阶段根本不注册**，
+在线工具集见 `../prototype.md` §7.2；**离线的六个工具在 held-out 阶段根本不注册**，
 不是注册了不用。
 
 **当前状态（S8 之后）**：上面这套结构全部落地了——`profiles/reviewer.md` 是独立
@@ -216,9 +220,15 @@ agent、由 extension spawn、Main 的工具集里没有 `spawn_agent` 也没有
 gate 是 `core/review.ts` 里的纯函数、$C^R_t \neq C^M_t$ 有逐片段查证的证据。
 
 **但触发时机还不对**：review 挂在 `agent_idle` 上，也就是 Main 已经产出最终 $SO$
-之后，而 `design.md` §5.2 的四个 checkpoint 有三个在 episode 中途。
+之后，而 `../design.md` §5.2 的四个 checkpoint 有三个在 episode 中途。
 所以现在的 $A_t$ 影响不了它所审查的那次搜索，M 轴（在线拓扑）因此还没有测量对象。
-完整记录与补法见 `06-progress.md` 的 **G-1**。
+完整记录见 `backlog.md` 的 **G-1**；**补法是 S11**，设计在 `../reviewer-design.md`，
+落点与验收在 `plan.md` §4。
+
+注意 S11 会改动本节描述的两处形态：Reviewer 变成**常驻**（随 search agent 一起
+spawn，D-10），建议投递变成**每条放行即发一条**而不是 review 结束时推全量（§5.2d）。
+"由 extension 而不是 Main 来 spawn"与"Main 的工具集里没有 `send_message`"这两条
+**不变**——它们才是"旁路"的定义。
 
 这一条要单独点明，是因为"通道通了"和"介入有作用面"看起来很像：
 两者都能产出一条 `provide_advice` 并落盘，区别只在于 Main 有没有机会读到它。
@@ -230,17 +240,17 @@ gate 是 `core/review.ts` 里的纯函数、$C^R_t \neq C^M_t$ 有逐片段查�
 无状态 worker，那它就该被封装进 Search Service"——所以这里显式区分。
 
 **调用点 A：Main Search Agent 自己的推理。** 走 WIDI 的 provider 通道。
-**它在原则上不可被 reduce 成工具。** `design.md` §4 的边界判据是
+**它在原则上不可被 reduce 成工具。** `../design.md` §4 的边界判据是
 "谁跨调用持有决策状态"，而 Main 的推理**就是那个状态本身**。
 把它封装成 Service 的一个端点，ReAct 轨迹就消失了，$\bar{\tau}_t$ 无从谈起，
 Reviewer 也就没有观察对象——被测对象被取消掉了。
 它是整条架构里唯一一个不可 tool-reducible 的 LLM 调用。
 
-这也是为什么 `06-progress.md` 的 **U-03**（WIDI 无法固定采样参数）
+这也是为什么 `history.md` 的 **U-03**（WIDI 无法固定采样参数）
 不能靠"封装进 Search Service"绕过：它卡的正是 A。
 
 **调用点 B：Service 侧的无状态 LLM worker。** L3b 判别器、L3a 的语义打分、
-查询扩展的语义部分。**这些确实是无状态 worker**，`design.md` §4 对它们的要求
+查询扩展的语义部分。**这些确实是无状态 worker**，`../design.md` §4 对它们的要求
 写得很死：
 
 > Service 内的判别器必须是无状态 worker（$y=f(x)$，输入自足、无跨调用记忆、
@@ -262,12 +272,12 @@ B 完全属于 Service，采样参数也完全由我们掌握——因为那是�
 经 `POST /judge` 转发，默认 provider 是局域网 vllm。
 但它**只是传输层**：`api/judge.py` 的 docstring 明确写了不含 prompt 模板与结果解析。
 判别策略层、$NP_k^{\mathrm{judge}}$ 载体与 L3b 接入排序栈都还没有，
-见 `docs/09-next-stages.md` 的 S12。
+见 `plan.md` 的 S12。
 
 A 仍然卡在 U-03，需要用户授权才能动 vendored 的 `packages/agent`。
 
 **一条现在就该定的约定**：B 的采样参数（temperature、max_tokens、模型版本）
-必须从第一天就进 `config.yaml` 并进 provenance。`prototype.md` §4.1 要求
+必须从第一天就进 `config.yaml` 并进 provenance。`../prototype.md` §4.1 要求
 judge 固定 `temperature 0`、固定 prompt 模板、结构化输出 schema，
 §4.2 的输出还要带 `rubric_version` / `criteria_version` / `model_version`。
 趁判别策略层还没写，现在钉住成本最低；等它变成第三处硬编码常量
@@ -284,7 +294,7 @@ judge 固定 `temperature 0`、固定 prompt 模板、结构化输出 schema，
 | --- | --- |
 | Preference Persistence / $PH_k$ | 一个 markdown 文件加 `projectContext` 引用就是全部。读取路径与版本管理都已存在，见 §2.4 |
 | $SP_M$ / $NP_k^{agent}$ 的"组装器" | `Compose` 由 WIDI 的系统提示词组装完成。只有选 interceptor 注入时才有一个 handler，那也不是模块 |
-| "四个概念模块" | `design.md` 的四个模块是**行为抽象**，不是目录结构。仓库里没有、也不应该有 `main-agent/`、`reviewer/`、`service/`、`preference/` 四个平行目录 |
+| "四个概念模块" | `../design.md` 的四个模块是**行为抽象**，不是目录结构。仓库里没有、也不应该有 `main-agent/`、`reviewer/`、`service/`、`preference/` 四个平行目录 |
 | Reviewer 的"调度器" | Reviewer 由 extension 在 observer 里 spawn，WIDI 的 orchestrator 就是调度器 |
 | 工具的"注册表" | `registerTool` 就是注册表 |
 

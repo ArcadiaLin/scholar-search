@@ -120,7 +120,7 @@ class BudgetResponse(BaseModel):
 
     Consumption is **process-scoped**, not episode-scoped: the Evidence Store
     that would carry per-episode accounting is not built yet
-    (``docs/07-widi-mapping.md`` §3.2). The field says so rather than implying an
+    (``docs/develop/mapping.md`` §3.2). The field says so rather than implying an
     episode boundary that does not exist.
     """
 

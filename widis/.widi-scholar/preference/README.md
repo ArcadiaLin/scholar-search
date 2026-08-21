@@ -2,7 +2,7 @@
 
 这个目录是 $PH_k$ 的实际载体——形式化里"跨 episode 的偏好状态"在这个仓库里
 就是这里的文件加上它们的 git 历史。为什么它不是一个代码模块，见
-`docs/07-widi-mapping.md` §2.4。
+`docs/develop/mapping.md` §2.4。
 
 本文件只讲**载体与约定**。条目内容是 S5 的事。
 
@@ -81,7 +81,7 @@ git diff <commit-v2> <commit-v3> -- widis/.widi-scholar/preference/np-agent.md
 
 S5 的验收判据是：**全关 vs 全开，同一查询的轨迹形状明显不同**。
 如果没有差别，说明策略还藏在 profile body 或工具序列里，
-S3/S5 有一处没做对（`05-skill-decomposition.md` §0）。
+S3/S5 有一处没做对（`docs/skill-decomposition.md` §0）。
 
 ## 一条纪律
 

@@ -1,9 +1,12 @@
 # Reviewer v0 与 $NP_0$ 重写：从三次真实会话推出来的设计
 
-> 状态：设计，尚未执行。stage 定义在 §6（S11），关键决策 D-10..D-12 / D-14 / D-15 在 §7
+> 状态：设计，尚未实现
 > 读者：要实现 Reviewer 第一版、或要写 $NP_0^{agent}$ 条目的人
 > 前置：`design.md` §5.2（四个 checkpoint）、`prototype.md` §7.2（Reviewer 工具集）、
-> `08-retrieval-defects.md`（F-1..F-11 与行为观察 B-1..B-5）、`09-next-stages.md`（S10）
+> `develop/backlog.md`（F-1..F-11 与行为观察 B-1..B-5）
+>
+> **落点与验收在 `develop/plan.md` §4（S11）**，本文只给设计。
+> 五条决策（D-10..D-12、D-14、D-15）的正文在 §7，同时汇总在 `develop/decisions.md`。
 
 **路径约定**：本文出现的裸文件名按下表还原，正文不再重复前缀。
 
@@ -73,7 +76,7 @@ k9u1 的提示前缀是 98ar 自己提炼的，逐条对照它实际做了什么
 > "根据策略，我会**同时尝试完整短语和关键词组合查询**，覆盖几个相关方向。"
 
 然后发出的 30 条查询里**没有一条是短语查询**。
-这是 `08-retrieval-defects.md` B-4 那个"声称 ≠ 执行"的现象，
+这是 `develop/backlog.md` B-4 那个"声称 ≠ 执行"的现象，
 但这一次提示就写在上下文里、agent 还复述了它——仍然没有执行。
 
 **结论**：陈述式偏好条目在当前模型上，产出的是**对该条目的复述**，不是对它的执行。
@@ -109,7 +112,7 @@ k9u1 全程的过程叙述：
 d9w6（无提示）用了 6/9 种工具；k9u1（有提示）调用量几乎翻倍（64 次）
 但只用了 4/9 种。**压力让 agent 做更多的同一件事，而不是做不同的事。**
 
-这与 `08-retrieval-defects.md` 的 B-3（策略在挫折下萎缩而非调整）一致，
+这与 `develop/backlog.md` 的 B-3（策略在挫折下萎缩而非调整）一致，
 现在有了第二个样本。
 
 ---
@@ -184,11 +187,11 @@ anti-leakage gate 的手工执行。
 | 扩展前先确认方向 | **暂缓**——这条本身不可观察，且 F-10 让 `expand_citations` 不可用 | — |
 
 第四条被砍掉是刻意的：**宁可少一条，不要留一条无法检查的**。
-`06-widi-scholar-roadmap.md` §3 那段"判据弱于设计"的告诫，
+`develop/plan.md` §8 那段"判据弱于设计"的告诫，
 在偏好条目这一层同样适用。
 
 **这不等于把 $NP$ 变成参数。** 阈值（"至少一条"、"Jaccard < 0.5"）属于 $HP_k$，
-按 `05-skill-decomposition.md` §2 的判定顺序应当拆出去；
+按 `skill-decomposition.md` §2 的判定顺序应当拆出去；
 留在 $NP$ 里的是**动作语义**（"要发短语查询"、"首轮要覆盖不同解释"）。
 条目与观察量的绑定关系写在条目的元数据里，不写在正文里。
 
@@ -201,7 +204,7 @@ anti-leakage gate 的手工执行。
 `design.md` 要求 Reviewer 是独立 agent（$C^R_t \neq C^M_t$ 是硬机制），
 这一点不能退。但**触发**不能交给模型：如果介入与否取决于 Reviewer 模型的判断，
 介入率就成了内生变量，$\Delta_{\mathrm{sidecar}}$ 无法归因
-（这正是 `07-widi-mapping.md` §3.4 否决 `ask_reviewer` 方案的同一条理由）。
+（这正是 `develop/mapping.md` §3.4 否决 `ask_reviewer` 方案的同一条理由）。
 
 所以 v0 分两层：
 
@@ -445,16 +448,16 @@ checkpoint——"Main 刚刚承诺了一批论文"正对上 `design.md` §5.2 �
 **为什么必须保留触发源二，而不是只用答案池。** 答案池更新是 Main 的动作，
 如果它是唯一触发源，Main 就**间接控制了介入率**——不写池子就不被审查。
 这会让 $\Delta_{\mathrm{sidecar}}$ 的归因重新变成内生的，
-正是 `07-widi-mapping.md` §3.4 否决 `ask_reviewer` 时担心的那件事。
+正是 `develop/mapping.md` §3.4 否决 `ask_reviewer` 时担心的那件事。
 检测器是**地板**：不管 Main 写不写池子，R1–R7 到了条件就触发。
 
 （一个相关的可测风险：Main 若学到"写池子会召来 Reviewer"，可能少写或多写。
-这与 `09-next-stages.md` §2.6 第二条是同一类副作用，合并观察即可，
+这与 `develop/plan.md` §3.8 第二条是同一类副作用，合并观察即可，
 观察量是"池子首次写入时刻"与"池子写入次数"。）
 
 ### 5.4 与 S10 答案池的关系
 
-答案池（`09-next-stages.md` S10）给 Reviewer 提供了**它现在没有的东西**：
+答案池（`develop/plan.md` §3（S10））给 Reviewer 提供了**它现在没有的东西**：
 一个可以直接读出覆盖缺口的对象。
 
 R2（查询单调）现在只能看查询词的重叠，这是个弱代理；
@@ -465,7 +468,7 @@ R2（查询单调）现在只能看查询词的重叠，这是个弱代理；
 所以 §5.2 的检测器表里，R2 与 R6 在 S10 之后应当升级为读答案池。
 
 **"检测器不依赖 S10"不等于"S11 可以排在 S10 之前"。** 顺序仍然是
-S10 → S11（`09-next-stages.md` §1）。这里说的是**降级路径**：
+S10 → S11（`develop/plan.md` §1）。这里说的是**降级路径**：
 七个检测器只用 $\bar{\tau}_t$ 的现有字段就能实现，
 所以万一 S10 延期，S11 的检测器部分不被阻塞。
 但 §5.3 的**触发源一（答案池更新）确实依赖 S10**，
@@ -478,7 +481,7 @@ $\Delta_{\mathrm{sidecar}}$ 的归因论证不完整。
 - **不新增 advice action**：`ADVICE_ACTIONS` 的七个够用，
   S10 之后若要加 `organize_answer` 再单独论证。
 - **不修改 Main 的工具集**：Reviewer 的建议靠 `precede` 注入下一轮上下文，
-  Main 结构上仍然无法向 Reviewer 求助（`07-widi-mapping.md` §3.4）。
+  Main 结构上仍然无法向 Reviewer 求助（`develop/mapping.md` §3.4）。
   注意常驻 Reviewer **不改变**这一点：`prompt` 的 `target` 是 extension 在用，
   不是 Main 在用；Main 的 `tools:` 里依然没有 `spawn_agent` / `send_message`。
 - **不给 Reviewer 任何读取 Main 上下文的工具**：见 §5.2c。
@@ -487,81 +490,17 @@ $\Delta_{\mathrm{sidecar}}$ 的归因论证不完整。
 
 ---
 
-## 6. S11 — Reviewer v0 与 $NP_0$ 重写
+## 6. 这份设计怎么落地
 
-**目标**：让 $A_t$ 在 episode 中途产生，并让每条偏好条目可被检查是否执行。
+落点、验收判据与前置条件在 **`develop/plan.md` §4（S11）**，不在本文。
 
-**前置**：F-1（arXiv AND 拼接）、F-2（失败原因透出）、F-10（id 归一）。
-F-10 是 R4 检测器的前提——扩展工具坏着的时候，"建议去做引文扩展"是有害建议。
+这样切分的理由与其他 stage 一致：设计文档给**为什么这样做**，
+推进计划给**做什么、做完怎么验**。两者的读者和更新节奏都不同——
+本文在实现开始后基本不动，而落点清单会随实现推进被勾掉。
 
-**落点**：
-
-路径按仓库根写全，不要只写文件名。extension 的三个文件都在
-`widis/.widi-scholar/extensions/scholar-search/` 下。
-
-**extension 侧**
-
-- `core/review.ts`：新增七个检测器（纯函数，与 gate 同文件同风格）
-- `index.ts`：Reviewer 改为在 `agent_spawned` observer 里起，条件
-  `event.profile.id === "search"`，episode 全程常驻（§5.2b）；
-  review 触发从 `agent_idle` 移到 `tool_execution_end` 与 `update_answer_pool` 两处；
-  **删除 `MAX_REVIEWS_PER_AGENT`**（`index.ts:272`，决策 D-14）；
-  建议投递改为**每条放行即发一条**，不再取 `gate.admitted()` 全量（§5.2d）
-- `core/trajectory.ts`：`TraceEvidence` 增加摘要/主题字段
-  （§5.2c 的唯一一处白名单扩宽）
-- `core/review.ts` 的 `renderTraceForReviewer`：增加 `DETECTED CONDITIONS` 段
-- `core/service-client.ts`：增加读取 `review:` 配置段的方法，与 `getBudget()` 同形
-
-**Service 侧**
-
-- `src/search-service/config.yaml`：新增 `review:` 段，放 R1–R7 的阈值
-  （含 R2 的 Jaccard，先取 0.5）作为 $HP$ 落位（§5.2e）
-- `src/search-service/src/search_service/api/`：新增只读端点返回该段
-
-**配置与偏好**
-
-- `widis/.widi-scholar/profiles/reviewer.md`：`whenToUse` 现在写的是
-  "extension starts it **at a review checkpoint**"，与常驻矛盾，需改写；
-  `tools:` 保持 `[provide_advice, inspect_evidence, get_ranking_features]`
-  **不变**——尤其不要加原生 `send_message`，理由见 §5.2d
-- `widis/.widi-scholar/preference/np-agent.md`：按 §4 重写并分成两组（决策 D-12）
-- `widis/.widi-scholar/preference/README.md`：补写作规程（§3.1 的两条纪律）
-- 纪律二的 lint：**注意 `scripts/widis-quality.mjs` 是 biome 的驱动器**
-  （对各 namespace 跑 lint / format / typecheck），它不检查 markdown 正文。
-  这条 lint 要作为独立检查步加进去，不是往现有规则里塞一条
-
-**做什么**：见 §4、§5。检测器的阈值来自配置，不硬编码
-（`design.md` §4：一个硬编码的边界无法为实验收窄）。
-
-**验收**：
-
-1. 拿 `search-k9u1` 的轨迹作为固定输入喂给检测器，
-   **R1、R3、R6 必须触发**——这三条是该次会话实测存在的缺陷，
-   检测器认不出它们就是没写对；
-2. 一次真实检索中，至少一条 `provide_advice` 的投递时刻**早于**
-   最后一次 `search_metadata`（即建议有机会改变它所审查的那次搜索——
-   这是 G-1 的正面判据）；
-3. gate 的拒绝记录里能看到检测器重复触发被 novelty key 挡下的条目
-   （说明检测器接在 gate 之内，没有绕过）；
-4. 一个 episode 内触发三次以上 review，Main 收到的建议**没有一条重复**——
-   这条直接验 §5.2d：投递的是刚放行的那一条，不是 `gate.admitted()` 的累计全量；
-5. Reviewer 常驻期间，`agent_spawned` 只为 `profile.id === "search"` 的 agent
-   配 Reviewer，**一个 episode 里 Reviewer 恰好一个**（验 §5.2b 的递归防护）；
-6. `np-agent.md` 的**绑定组**每条都能指出它对应 $\bar{\tau}_t$ 的哪个字段，
-   且满足 D-12 的可绑定判据（关掉它轨迹会不同）；
-7. lint 能拦下一条含 arXiv id 的条目；
-8. TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
-   **没有** Main 的私有推理（沿用 S8 的逐片段查证方法，leaks = 0）。
-
-**这些判据不检验什么**：建议的**质量**，以及 Main 是否采纳。
-判据 2 只验"有机会被读到"，不验"读了之后变好了"——
-后者是 M 轴的结论，需要 S10 的召回指标才能测。
-按 `06-widi-scholar-roadmap.md` §3 的规矩，若发现两者被混谈，
-差额写进"验收缺口"，不要放宽判据。
-
-**独立价值**：G-1 关闭；$NP$ 条目从"不可检查的劝告"变成"可检查的断言"。
-
----
+实现前必读本文的两节：**§5.2c**（Reviewer 拿细节的唯一合法方式）
+与 **§5.2d**（建议怎么投递）。这两处都是"看起来有更省事的做法、
+而那个做法会毁掉一项设计性质"的地方。
 
 ## 7. 决策（原"尚未决定的问题"，2026-08-22 定）
 
@@ -590,7 +529,7 @@ $\Delta_{\mathrm{sidecar}}$ 的归因重新变成内生的。检测器是地板�
 - **未绑定组 B**：条目保留在文件里，标 `observable: none`，
   **排除在消融之外**，并各自写清为什么暂时绑不了。
 
-这样处理有四个好处：不丢失 `05-skill-decomposition.md` 追溯到的 CF-* 出处；
+这样处理有四个好处：不丢失 `skill-decomposition.md` 追溯到的 CF-* 出处；
 P 轴作用在一个良定义的集合上；B → A 的提升成为一条具体的、可增量推进的工作队列；
 条目数这个问题自然消失。
 
@@ -617,8 +556,8 @@ P 轴作用在一个良定义的集合上；B → A 的提升成为一条具体�
 逻辑不搬，因为搬了就要在 Python 里镜像 `PublicSearchTrace` 的 schema，
 把 Service 绑死在 WIDI 的事件形状上。
 
-> 另有 **D-13**（答案池的身份归一通路）记在 `09-next-stages.md` §2.3b 与 §4，
-> 因为它属于 S10 的落地决定。
+> 另有 **D-13**（答案池的身份归一通路）属于 S10 的落地决定，
+> 与本文五条一并收在 `develop/decisions.md`。
 
 ---
 
