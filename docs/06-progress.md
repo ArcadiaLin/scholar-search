@@ -17,7 +17,7 @@
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
 | S8 | Reviewer 通道 | DONE | `2bc0046` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
-| S9 | RPC 评测入口 | TODO | | |
+| S9 | RPC 评测入口 | DONE | `PENDING_S9` | 只走 RPC 帧不读 session；§5.3 provenance 逐项落地；失败样本进分母 |
 
 状态取值：`TODO` / `IN_PROGRESS` / `DONE` / `BLOCKED`。
 `IN_PROGRESS` 必须在备注里写清做到哪一步；`BLOCKED` 必须写清卡在哪、试过什么、需要什么。
@@ -805,6 +805,66 @@ Reviewer 旁路通道跑起来了。
   不能依赖 `wait_tree_idle`。记在这里给 S9。
 
 - commit: `2bc0046`
+### 2026-08-21 — S9
+
+benchmark 可以无头驱动 widi-scholar 了。
+
+- 落点：`experiments/eval-runner/`
+  - `rpc-client.mjs`：版本化的 JSONL RPC client（`RUNNER_VERSION = "1"`，
+    与 WIDI 的 RPC protocol version 是两个版本号，各记各的）。
+    经 `npm run --silent widi:rpc` 启动——文档化的入口，不绕过它直接拉
+    `packages/widi`。
+  - `run.mjs`：评测入口。单条查询或 JSON 查询文件，结果写 `runs/eval/<name>/run.json`
+    （`runs/` 已 ignore，产物不入 Git，§5.2）。
+  - `queries.example.json` + `README.md`。
+  - 另外给 extension 加了 `EXTENSION_VERSION = "1"` 并让 `get_budget` 的
+    `details` 携带它：`inspect` 只报 extension id 不报版本，
+    而 §5.3 要求 run 记录 extension 版本。
+
+- **§3.3 的边界**：不抓 TUI 文本、不解析控制序列、不读 session 文件。
+  所有数字来自 RPC 帧；stdout 上出现非 JSON 行按协议违规直接报错，不猜。
+  唯一例外是仓库 revision，用 `git rev-parse` 读——那是 checkout 的事实，
+  不是 run 的。
+
+- **§5.3 要求的 provenance 逐项落地**（实测输出核对过）：
+  namespace、`rpcProtocolVersion: 1`、WIDI revision（`1ab7905…`）、
+  profile `{id: search, source: agent_dir}`、model `{vllm, qwen3.6-35b-a3b, baseUrl}`、
+  thinking level、extensions（含 runtime 的 stale 检查结果 `{stale: false}` 与
+  `scholarSearchVersion: "1"`）、生效预算（经 `get_budget` 工具取得——
+  边界在 Service 配置里，runtime 看不到）、启动诊断、
+  父仓库 revision + dirty 标志。
+
+- **每样本契约**（§5.3 最后一条）：稳定关联 `id`；`terminationStatus` 与 `ok`
+  分开（超时和被拒都是"没有答案"，折叠就没有失败分类）；机器可读结果
+  （答案只取 text part，推理不混入；带 usage）；**失败样本留在记录里进分母**。
+
+- **隔离**：每条查询 spawn 新 agent、跑完 dispose。共享上下文会让第 N 条
+  看见第 N-1 条的结果。
+
+- 验收（实际命令与输出）：
+  1. `npm run build` 成功（`widi:rpc` 跑 dist，S0 的 E-01 修复只动了 dev 分支，
+     built 路径本来就用 `process.execPath`，无需改动）。
+  2. 单查询：`node experiments/eval-runner/run.mjs --query ... --model vllm/qwen3.6-35b-a3b`
+     → `queries 1: 1 ok, 0 failed`，`run.json` 里 §5.3 各项齐全（上面逐项列过）。
+  3. 多查询（`queries.example.json`，2 条）→ `2 ok, 0 failed`，
+     每条独立 agent、独立 `elapsedMs` 与 usage。
+  4. 失败路径：`--deadline-ms 3000` 强制超时
+     → `counts: {total:1, ok:0, failed:1}`，
+     `terminationStatus: "timeout"`，`error: "prompt exceeded its 3000ms deadline."`，
+     样本仍在记录里。
+  5. `biome check --error-on-warnings` 对三个 runner 文件 → `No fixes applied.`；
+     `tsgo` 退出 0；`npm run test:widis` → `150/150`。
+
+- 两个如实标注：
+  - runner 的 per-query 工具统计目前只有 run 级汇总（`run_summary` 是全 run 的）。
+    要 per-query 的工具账目，用 S6 的轨迹文件（按 agentId 对应）或后续给 RPC 加
+    per-agent summary——记为后续项，不假装已有。
+  - S8 里记过：`wait_tree_idle` 因 Reviewer 常驻不会 idle。本 runner 用
+    `prompt` 的完成 + `dispose` 作为样本终止条件，不依赖 `wait_tree_idle`，
+    该问题不影响评测路径（评测时 `SCHOLAR_REVIEWER` 默认关闭）。
+
+- commit: `PENDING_S9`
+
 
 
 

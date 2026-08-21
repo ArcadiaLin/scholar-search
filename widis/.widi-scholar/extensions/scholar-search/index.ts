@@ -234,6 +234,16 @@ function formatSearchState(state: SearchStateRecord): string {
 	return lines.join("\n");
 }
 
+/**
+ * This extension's own version, reported through `get_budget`.
+ *
+ * WIDI's `inspect` names the loaded extensions but carries no version for them,
+ * and an evaluation run has to record which tool set produced its numbers
+ * (`AGENTS.md` §5.3). Bump it whenever the registered tools or their contracts
+ * change - a run recorded against `1` must mean the same nine tools next month.
+ */
+export const EXTENSION_VERSION = "1";
+
 export const TRACE_DIR_ENV_VAR = "SCHOLAR_TRACE_DIR";
 /**
  * The sidecar is off unless asked for.
@@ -1281,7 +1291,14 @@ const extension: ExtensionDefinition = {
 
 				let text = lines.join("\n");
 				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
-				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+				return {
+					content: [{ type: "text", text }],
+					// `extensionVersion` rides along here because this is the tool that
+					// reports effective configuration, and an evaluation run has to record
+					// which tool set produced its numbers. WIDI's `inspect` names the
+					// loaded extensions but carries no version for them.
+					details: { baseUrl: client.baseUrl, extensionVersion: EXTENSION_VERSION, ...result },
+				};
 			},
 		});
 	},
