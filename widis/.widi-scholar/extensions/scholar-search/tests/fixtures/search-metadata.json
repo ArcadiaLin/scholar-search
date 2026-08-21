@@ -74,7 +74,8 @@
       "raw": null,
       "score": 0.03278688524590164,
       "rank": 1,
-      "tier": "partially_relevant"
+      "tier": "partially_relevant",
+      "canonical_id": "arxiv:1706.03762"
     }
   ],
   "search_state": {
@@ -129,7 +130,18 @@
       "recalled": 2,
       "returned": 1
     },
-    "failures": []
+    "failures": [],
+    "judge": {
+      "level": "off",
+      "requested_level": "off",
+      "supported": true,
+      "considered": 0,
+      "judged": 0,
+      "cache_hits": 0,
+      "rubric_version": null,
+      "criteria_version": null,
+      "model_version": null
+    }
   },
   "provenance": {
     "per_paper_sources": {

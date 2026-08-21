@@ -520,6 +520,16 @@ export function renderTraceForReviewer(
 			readonly args: Readonly<Record<string, unknown>>;
 			readonly failed: boolean;
 			readonly errorMessage: string | undefined;
+			readonly searchState?: {
+				readonly judge?: {
+					readonly level: string;
+					readonly judged: number;
+					readonly considered: number;
+					readonly rubricVersion: string | null;
+					readonly criteriaVersion: string | null;
+					readonly modelVersion: string | null;
+				};
+			};
 		}[];
 		readonly evidence: readonly {
 			readonly paperId: string;
@@ -587,6 +597,21 @@ export function renderTraceForReviewer(
 		for (const entry of pool.removed.slice(0, 20)) {
 			lines.push(`  withdrawn ${entry.canonicalId} :: ${entry.title.slice(0, 120)} - ${entry.reason.slice(0, 200)}`);
 		}
+	}
+
+	// The judge's account, when there was one. A Reviewer told "these are relevance
+	// ordered" reads the list differently from one told "these are recall ordered".
+	const judged = trace.calls
+		.map((call) => call.searchState?.judge)
+		.filter((account): account is NonNullable<typeof account> => account !== undefined && account !== null);
+	if (judged.length > 0) {
+		const latest = judged[judged.length - 1];
+		lines.push(
+			"",
+			`Relevance judging: ${latest?.level} - ${latest?.judged} of ${latest?.considered} candidate(s) judged ` +
+				`(rubric ${latest?.rubricVersion ?? "?"}, criteria ${latest?.criteriaVersion ?? "?"}, ` +
+				`model ${latest?.modelVersion ?? "?"}).`,
+		);
 	}
 
 	lines.push("", "Calls in order:");

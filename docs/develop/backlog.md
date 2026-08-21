@@ -8,8 +8,8 @@
 
 | | 是什么 | 编号 | 位置 |
 | --- | --- | --- | --- |
-| **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-11` | 前半篇 |
-| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-8` | 后半篇 |
+| **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-13` | 前半篇 |
+| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-10` | 后半篇 |
 
 编号避开已被占用的 `D-`（决策，见 `decisions.md`）、`U-`（上游缺陷）、
 `SV-`（Service 缺陷）、`E-`（环境）——后三类在 `history.md`。
@@ -103,8 +103,12 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 | F-9 | LLM provider 的凭据走 `os.environ`，同样读不到 `.env` | 未修（潜伏） | 换 provider 时会咬人 |
 | **F-10** | `expand_citations` 不接受其他工具产出的 id | **已修** | **S11 的 R4 检测器**；E 轴 |
 | F-11 | OpenAlex 的 ML 预印本引文图稀疏，backward 扩展不可用 | **不可修**（数据现实） | E 轴的默认方向 |
+| **F-12** | 查询里的 `?` 让 OpenAlex 直接 400 | 未修 | 任何绕过 agent 的批量评测 |
+| **F-13** | AND 连接对整句自然语言查询过严（实测 0 条） | 未修 | 同上；J 轴消融已改用夹具查询 |
 
-加粗的三条是 S10 的前置修复，见 `plan.md` §2。
+F-1 / F-2 / F-10 是 S10 的前置修复，已修，见 `plan.md` §2 与 `worklog.md` §4。
+F-12 / F-13 是 S12 期间实测到的两条新缺陷：它们只在**绕过 agent** 的路径上发作
+（agent 送的是词项式查询），但那条路径正是批量评测走的，所以它们阻塞的是评测而不是产品。
 
 ---
 
@@ -556,6 +560,59 @@ E 轴（引文扩展）在当前实现下没有测量对象。
    断言不出现 `[http] ... is not a valid OpenAlex ID`。
    **工具 A 的输出必须是工具 B 的合法输入**，这条该成为工具集的通用契约。
 
+## F-12 — 查询里的 `?` 让 OpenAlex 直接 400（未修）
+
+**现象**：把 AutoScholarQuery 的问句原样作为 `query` 发给 `/search/metadata`，
+OpenAlex 侧整条失败。
+
+**证据**（2026-08-21，S12 的 J 轴消融第一次跑，`runs/judge-ablation/accept`）：
+
+```
+openalex [http] query 'Could you provide me some works employs image patches and
+superpixels in region-based methods for semantic segmentation?':
+OpenAlex client error 400: {"error":"Invalid query parameters error.",
+ "message":"Wildcards (* or ?) require exact (no-stem) search. ... Use the
+ search.exact= parameter instead ..."}
+```
+
+**根因**：OpenAlex 把 `?` 当通配符。问句末尾的问号于是让整个 `search=` 参数
+变成一个非法的通配查询。`plugins/openalex.py` 的 `build_base_params` 把
+调用方的 query 原样放进 `search`，不做任何字符归一。
+
+**后果**：任何以自然问句结尾的查询在 OpenAlex 上是 100% 失败，而不是"结果差"。
+这在 agent 路径上被掩盖了——agent 送的是词项式查询，不带问号；
+只有直接把数据集问句喂给 Service 时才暴露。**这也意味着任何绕过 agent 的
+批量评测（包括 J 轴消融）都会先撞上它。**
+
+**补上它需要**：`search` 参数里的 `?` 与 `*` 做转义或剔除（OpenAlex 无转义语法，
+实际只能剔除，并把剔除动作记进 `native_query` 让它可见）。
+剔除会改变查询语义，所以这是一条需要决策的改动，不是纯 bugfix。
+
+## F-13 — AND 连接对整句自然语言查询过严，实测确认（未修）
+
+**现象**：`worklog.md` §3 预告过这条风险，S12 的消融把它变成了实测。
+同一条 17 词问句，`sources: ["arxiv"]`，返回 **0 条**。
+
+**证据**：`runs/judge-ablation/accept` 第一次运行，两条查询的 `returned` 都是 0，
+其中 arXiv 侧无 failure（不是错误，是真的没有结果），OpenAlex 侧是 F-12。
+
+**根因**：F-1 的修法把词间连接改成 AND，一句 17 词的提问因此变成 17 个必须全部
+命中的词项。这不是 F-1 的回归——F-1 修对了它要修的东西（`backlog.md` §1 的
+0/4 → 4/4 用的是词项式查询），但它把"送整句"这条路从"结果很差"变成了"零结果"。
+
+**后果**：
+- agent 路径不受影响：工具描述已经把它引向词项式查询（D-16），实测它送的都是
+  词项组合；
+- **绕过 agent 的路径受影响**：任何把数据集问句直接当 `query` 用的批量评测
+  都会拿到 0 条。J 轴消融因此改用固定的词项式 `searchQuery` 作为夹具
+  （`experiments/judge-ablation/queries.accept.json`），并在记录里同时留下
+  原问句与实际发出的查询。
+
+**补上它需要**：一条对长查询的降级策略。可选项各有代价，需要决策而不是修 bug：
+按词项数阈值自动降级成 OR（引回 F-1 的问题面）、去停用词后再 AND
+（引入一份需要维护的词表，且对非英语查询失效）、或在 Service 侧不做而要求
+调用方送词项（现状，把责任放在工具描述上）。
+
 ## F-11 — OpenAlex 的 ML 预印本引文图很稀疏，backward 扩展基本不可用（未修，是数据现实）
 
 **现象**：即使修好 F-10，`direction=backward` 在本项目的语料上依然大面积无效。
@@ -638,7 +695,7 @@ E 轴（引文扩展）在当前实现下没有测量对象。
 
 ---
 
-## 验收缺口 G-1..G-8
+## 验收缺口 G-1..G-10
 
 这一节记的是"**stage 验收通过、但设计要求尚未满足**"的部分。
 
@@ -730,6 +787,54 @@ WIDI revision、profile、模型、extension 版本、生效预算、启动诊�
 **后果**：S5 那张对照表无法在仓库内一键复现；将来任何用 S9 跑出来的数字同样如此。
 
 **补上它需要**：见 `history.md` 的 **U-03**。三条路径互斥，需要用户拍板选一条。
+
+### G-9 — S12 判据 2 的"出现在 $\bar{\tau}_t$ 里"没有经过真实 agent episode（S12）
+
+**判据原文**：`judge_level=l3b` 时 `judgeSupported: true`，实际判别篇数写进
+`SearchState` **并出现在 $\bar{\tau}_t$**。
+
+**已验的**：`SearchState.judge` 在真实运行里带着完整账目
+（`level` / `judged: 30` / `considered: 30` / `rubric_version: r3` /
+`criteria_version` / `model_version`），见 `worklog.md` §8 的 J 轴消融记录。
+extension 侧的解析与 `PublicSearchTrace` 的 `judge` 字段各有单测。
+
+**没验的**：**一次真实 agent episode 里 $\bar{\tau}_t$ 带着判别账目落盘。**
+原因是算力而不是通路：agent 一个 episode 发 19 次 `search_metadata`，
+每次判 30 篇、每篇一次 LLM 往返（实测约 15–18 秒），
+一个 episode 的判别开销就是 **2.5 小时以上**。
+
+**后果**：链路的最后一跳（`SearchState.judge` → 工具 `details` →
+`tool_execution_end` → `PublicSearchTrace`）只有单测作证。三段各自被测过，
+拼起来没被跑过一次。
+
+**补上它需要**：一次开着 `judge.forced_level: l3b`、把
+`judge.max_papers_l3b` 临时降到 3–5 的 episode。降低篇数会让判别质量无意义，
+但这条判据验的是账目是否流到轨迹里，不是判得准不准——所以这是一次
+**便宜且有效**的验证，只是要在记录里写明篇数被降过。
+
+### G-10 — L3a / L3c 未实现，J 轴只有 J0 与 J2 两组（S12）
+
+**设计要求**：`../prototype.md` §4.1 定义三档
+（L3a cross-encoder $N_{sem}=100$ / L3b LLM judge on abstract $N_{judge}=30$ /
+L3c fulltext $N_{full}=8$，P0 默认关闭），§6.5 的 J 轴是 J0–J3 加上 J2'。
+
+**实际实现**：只有 L3b。请求 `l3a` 或 `l3c` 会被如实报告为
+"not implemented in this build"，**不会被静默降级成 l3b**——这一处是对的，
+是 D-09 那个教训的直接应用。
+
+**后果**：
+- **J1（只有 L3a）与 J3（三档全开）没有实现面**，J 轴目前只有 J0 与 J2；
+- `prototype.md` §6 要求的 judge-free 消融**成立**（J0 对 J2 就是它），
+  所以 §5.6 那条硬要求没有被绕过；
+- 但 "L3a 便宜且够用吗" 这个问题无法回答，而它决定默认策略
+  （§4.1 写的是"预算充裕走 L3a + L3b，紧张时只走 L3a"）——
+  这个默认策略当前没有实现依据。
+- **J2'（judge 蒸馏后的 L2 打分器）更远**：它需要 L2 存在，而 L2 属于 G-5。
+
+**补上它需要**：L3a 是一个 cross-encoder 打分器，不是 LLM 调用，
+所以它不在 `judge/` 这一层，而是 G-5 里 "L2 与参数外提" 的邻居。
+L3c 需要全文，`search_fulltext` 已有，但 §4.1 明说 P0 默认关闭。
+**两者都不阻塞 J0/J2 的对照。**
 
 ### G-7 — S11 判据 3 的"被 novelty key 挡下"在真实运行里没走到（S11）
 
@@ -853,7 +958,18 @@ L2 与参数外提尚无 stage。
 | 随时，很小 | **F-9**：LLM provider 改用 `Settings` 字段而非 `os.environ` | 潜伏缺陷，现在不咬人；改动照 `config.py:136-139` 的样板抄 |
 | **S10 之后** | **F-4**：`call_ledger` 接上 `cost_model` 与上游 `x-ratelimit-*` 头 | 它激活 `../design.md` §5.2 的"预算接近上限"checkpoint，也就是 S11 的 R7 检测器的数据源。放在 S10 之后是因为它要用到 S10 建立的评测回路来验证记账是否准 |
 | **S12 之前** | **F-11 的应对**：把 `graph_references` 的能力声明改成实测结果，E 轴默认改 forward | 它推翻的是一条 `CAP` 断言，不改会让 E 轴实验从错误的默认值出发 |
-| 无排期 | **F-5 的 `np-agent.md` 时间窗条目**、**F-6 / G-5 的参数外提** | 前者并进 S11 的 $NP_0$ 重写顺手做；后者需要单独的 stage |
+| ~~无排期~~ **已做** | **F-5 的 `np-agent.md` 时间窗条目** | 并进 S11 的 $NP_0$ 重写：A 组的 `carry-the-date-boundary`（`[NP v2]`） |
+| 无排期 | **F-6 / G-5 的参数外提** | 需要单独的 stage |
+
+四段路线走完之后新增的条目，以及它们该插在哪里：
+
+| 何时做 | 做什么 | 为什么是这个位置 |
+| --- | --- | --- |
+| **下一件** | **F-4**：`call_ledger` 接上 `cost_model` 与上游 `x-ratelimit-*` 头 | 它是 R7 检测器唯一的数据源。R7 现在拿 `budget.totalCalls` 对一个配置里的软上限比，那是调用次数不是预算——真正的"预算接近上限"checkpoint 仍然没有数据可触发 |
+| **任何批量评测之前** | **F-12 / F-13**：查询归一（`?` 与 `*`）与长句降级策略 | 两者都只在绕过 agent 的路径上发作，而那正是批量评测的路径。J 轴消融已经用夹具查询绕过它们一次（D-26），但绕过不是修好 |
+| **J 轴报结论之前** | **G-10**：至少让 J1 有实现面（L3a） | 现在 J 轴只有 J0 与 J2。judge-free 消融成立（§5.6 的硬要求没被绕过），但"L3a 便宜且够用吗"这个决定默认策略的问题无法回答 |
+| **M 轴开跑之前** | **G-8**：一次交互式 TUI 的 Reviewer 对话查证 | D-10 把"用户能直接与 Reviewer 对话"列为常驻化的第二条理由，而人工 review 是 $NP_0$ 的种子来源。**需要人在 TUI 前**，无法自动化 |
+| 便宜，随时 | **G-9**：把 `judge.max_papers_l3b` 临时降到 3–5 跑一个 episode | 验的是判别账目流到 $\bar{\tau}_t$，不是判得准不准，所以降篇数不影响这条判据 |
 
 排序的依据是"单位改动量的信息增益"，不是严重程度——F-1 排第一不是因为它最严重，
 而是因为它改动最小、收益最大，且 §1 已经给出可直接用作回归断言的期望值。

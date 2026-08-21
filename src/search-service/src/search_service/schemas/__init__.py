@@ -16,6 +16,8 @@ from search_service.schemas.judge import (
     JudgeRequest,
     JudgeResponse,
     LLMMessage,
+    RelevanceJudgeRequest,
+    RelevanceJudgeResponse,
 )
 from search_service.schemas.paper import (
     Author,
@@ -53,6 +55,7 @@ from search_service.schemas.state import (
     CandidateCounts,
     Failure,
     IssuedQuery,
+    JudgeAccount,
     Provenance,
     SearchState,
 )
@@ -76,6 +79,7 @@ __all__ = [
     "FulltextResponse",
     "FulltextSection",
     "IssuedQuery",
+    "JudgeAccount",
     "JudgeRequest",
     "JudgeResponse",
     "LLMMessage",
@@ -88,6 +92,8 @@ __all__ = [
     "RankRequest",
     "RankResponse",
     "RankedPaper",
+    "RelevanceJudgeRequest",
+    "RelevanceJudgeResponse",
     "ReliabilityProfile",
     "ReviewConfigResponse",
     "SearchRequest",

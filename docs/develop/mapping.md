@@ -20,18 +20,19 @@
 | 设计概念 | WIDI 载体 | 实际路径 | 状态 |
 | --- | --- | --- | --- |
 | Main Search Agent | profile | `widis/.widi-scholar/profiles/search.md` | S3 已落地 |
-| $T^M$ 工具集 | extension 的 `registerTool` | `widis/.widi-scholar/extensions/scholar-search/index.ts` | S7 已补齐九个 |
+| $T^M$ 工具集 | extension 的 `registerTool` | `widis/.widi-scholar/extensions/scholar-search/index.ts` | S7 补齐九个；S10 加第十个 `update_answer_pool`（D-08） |
 | $SP_M$ 静态部分 | profile body | `profiles/search.md` 正文 | S3 已落地 |
-| $NP_k^{agent}$ | profile `projectContext` 指向的受控文件 | `widis/.widi-scholar/preference/np-agent.md` | S4 载体，S5 内容 |
+| $NP_k^{agent}$ | profile `projectContext` 指向的受控文件 | `widis/.widi-scholar/preference/np-agent.md` | S4 载体，S5 内容，S11 重写成 A/B 两组（D-12） |
 | $PH_k$（偏好载体） | 同上 + git 历史 | 同上 | S4 已落地 |
-| $HP_k$ / $\theta^S_k$ | Service 配置，经工具入参传递 | `src/search-service/config.yaml` + 工具参数 | 部分：排序权重与 tier 阈值仍硬编码在 `api/probe.py`（G-5） |
-| Search Service | 已有的 Python HTTP 服务 | `src/search-service/` | 已有，S2/S7 扩展到十个端点 |
+| $HP_k$ / $\theta^S_k$ | Service 配置，经工具入参传递 | `src/search-service/config.yaml` + 工具参数 | 部分：`review:` 与 `judge:` 两段已落地（D-15、D-24）；排序权重与 tier 阈值仍硬编码在 `api/probe.py`（G-5） |
+| Search Service | 已有的 Python HTTP 服务 | `src/search-service/` | 已有；S2/S7 扩展到十个端点，S11 加 `/review-config`，S12 加 `/judge/relevance` |
 | Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地（G-2） |
-| $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地 |
-| Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S8 通道已通；介入时机偏在 episode 之后（G-1） |
-| $NP_k^{judge}$ | Service 侧判别器的准则文本（见 §3.5） | 无载体 | 未落地，见 `plan.md` S12 |
-| Service 侧 LLM worker | `llm/` provider 抽象 + `POST /judge` | `src/search-service/src/search_service/llm/` | 传输层已落地（`aac617c`）；判别策略层未落地 |
-| $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | 无载体 | 未落地，见 `plan.md` S10 |
+| $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地；S10 加答案池投影，S11 加摘要开头（§5.2c 批准的唯一扩宽），S12 加判别账目 |
+| Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S11 已落地：常驻、七个检测器、每条放行即发（G-1 关闭；判据缺口见 G-7/G-8） |
+| $NP_k^{judge}$ | Service 读取的准则载体，经 `Configure` 进 $\theta^S_k$ | `widis/.widi-scholar/preference/np-judge.md` + `config.yaml` 的 `judge.carrier` | S12 已落地（D-24） |
+| Service 侧 LLM worker | `llm/` provider 抽象 + `POST /judge` | `src/search-service/src/search_service/llm/` | 传输层 `aac617c`；判别策略层 S12 落在 `search_service/judge/` |
+| L3b 判别层 | Service 侧策略层，经 `judge_level` 触发 | `src/search-service/src/search_service/judge/` | S12 已落地；L3a / L3c 未实现，请求它们会被如实报告为不支持 |
+| $SO$（结构化答案） | extension 工具 + `${agentId}.answer.json` | `core/answer-pool.ts` + `index.ts` 的 `update_answer_pool` | S10 已落地（判据缺口见 G-6） |
 
 "状态"列是**当下**的实话，不是计划。stage 状态在 `history.md`，缺口在 `backlog.md`；
 `G-n` 指向该文件的"验收缺口"一节——那里记的是 stage 验收已通过、

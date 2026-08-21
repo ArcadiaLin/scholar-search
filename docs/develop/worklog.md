@@ -313,4 +313,116 @@ Reviewer 看不到 gold，这个判断在它掌握的信息下是合理的；
 但它说明了一件对 M 轴很重要的事：**一个只看轨迹的观察者会强化候选集里已有的主题分布**，
 因为"这批结果不够聚焦"和"这批结果聚焦错了"在轨迹上长得一样。
 这不是本 stage 的验收对象，但它是 $\Delta_{\mathrm{sidecar}}$ 可能为负的一条具体机制，
-应当进 `../experiments.md` 的 M 轴假设。
+应当进 `../experiments.md` 的 M 轴假设。**已记进 `../experiments.md` §4.2.1**，
+连带一个能测它的观察量（建议前后子查询词项集合的收缩率）。
+
+## 8. S12 的决策与验收记录
+
+### 决策
+
+| 日期 | 在哪 | 选了什么 | 理由 | 影响面 |
+| --- | --- | --- | --- | --- |
+| 2026-08-21 | `preference/np-judge.md` + `config.yaml` `judge.carrier` | $NP^{judge}$ 的载体放 `preference/`，config 里只放指针 | 把准则塞进 `config.yaml` 会抹掉 `Configure` 这条边——那时 $NP^{judge}$ 与 $HP$ 就是同一个东西 | **实验对照** → D-24 |
+| 2026-08-21 | `judge/criteria.py` | `criteria_version` 由（派生 prompt 版本 + 归一化查询 + 载体全文 + 配置指纹）内容哈希派生，不手写 | 手写的版本号是会被忘记 bump 的版本号；内容寻址让"改准则等于换口径"自动成立，也让缓存不可能过期 | **实验对照** → D-24 |
+| 2026-08-21 | `config.yaml` `judge.forced_level` | 配置可以覆盖调用方的 `judge_level` | 参数留在签名里（agent 的策略）与消融要按住它（受控变量）方向相反，覆盖是唯一同时满足两者的形状；`requested_level` 与 `level` 都报，所以覆盖可观测 | **实验对照** → D-25 |
+| 2026-08-21 | `judge/service.py` `config_fingerprint` | `forced_level` **不进**指纹 | 钉住档位决定"这篇有没有被判"，不是"怎么判"；进指纹会让 J0 与 J2 的 `criteria_version` 不同，比较就没意义了 | **实验对照** → D-25 |
+| 2026-08-21 | `api/search.py` | 判别时召回放宽到 `max(top_k, max_papers_l3b)`，判完再截断到 `top_k` | `prototype.md` §6 要求"先判全部再取 top-k"；只判 top-k 会让判别器退化成对召回顺序的重排而不是对候选集的筛选 | **实验对照**（同一 `top_k` 下实际召回的条数变了） |
+| 2026-08-21 | `api/search.py` `_apply_judgements` | 判不了的论文保持判前顺序、排在已判的之后，不按 0 分处理 | §6 的"judge 失败不惩罚被评方"。按 0 分处理会让一次解析失败等价于一次"完全不相关"的判决 | 只影响判别后的排序 |
+| 2026-08-21 | `judge/strategy.py` | 任一准则缺项或标签不认识 → **跳过该篇**并计入 `failures`，不补默认档 | §4.2 第二条约束。补默认档等于替模型做了一个它没做的判决，而合成分会把缺项当 0 分 | 只影响判别失败路径 |
+| 2026-08-21 | `experiments/judge-ablation/` | J 轴消融直接打 Service，不跑 agent；查询可由夹具 `searchQuery` 覆盖 | 经 agent 的两次 episode 不会发出同样的查询，判别器的效应会和 agent 的方差绑在一起 | **实验对照** → D-26 |
+| 2026-08-21 | 消融的默认 `--k` | 10（而召回上限跟着 `max_papers_l3b` = 30） | 若 $k \ge$ 候选集大小，两组的 top-$k$ 是同一个集合，Recall@k 必然相同——第一次跑 `--k 20`/候选 20 就撞在这上面，那个 0 差异是设计错误不是结论 | **实验对照** → D-27 |
+
+### 判据 1 — 给定一条准则与一篇论文，返回 §4.2 的 JSON 结构，三个版本可追溯 ✅
+
+`POST /judge/relevance`，live vllm，`carrier_version: 1`：
+
+```
+paper_id        arxiv:1810.09726
+criteria        semantic_segmentation_task  Highly Relevant   "semantic image segmentation"
+                superpixel_unit             Somewhat Relevant "selected via superpixels"
+                region_based_strategy       Somewhat Relevant "region-based active learning approach"
+                superpixel_integration      Highly Relevant   "selected via superpixels"
+score / tier    0.4444 / somewhat_relevant
+rubric_version  r3
+criteria_version cq_24947a5647b2915f
+model_version   vllm/qwen3.6-35b-a3b
+```
+
+四条准则的权重由模型给出后归一化（0.111 / 0.333 / 0.333 / 0.222），
+snippet 全部逐字来自证据文本。
+
+### 判据 2 — `judge_level=l3b` 时 `judgeSupported: true`，判别篇数进 `SearchState` ⚠️ 部分
+
+`SearchState.judge` 在真实运行里带全套账目：
+
+```
+level l3b | requested_level l3b | supported true | considered 30 | judged 30
+rubric_version r3 | criteria_version cq_9071ec2a8e87a1df | model_version vllm/qwen3.6-35b-a3b
+```
+
+extension 侧 `judgeSupported` 现在读的是这个账目而不是常量，
+`index.ts:827` 那个写死的 `false` 已经不存在了。
+
+**没验的是"出现在 $\bar{\tau}_t$ 里"这一跳经过一次真实 agent episode**：
+链路的三段（`SearchState.judge` → 工具 `details` → `PublicSearchTrace.judge`）
+各有单测，拼起来没跑过。原因是算力：一个 episode 19 次检索 × 30 篇 × 一次 LLM 往返
+（实测 15–18 秒）≈ 2.5 小时。记成 G-9，并写明补它的便宜办法。
+
+### 判据 3 — 改一条 `np-judge.md` 的条目能改变判别输出 ✅
+
+同一篇论文、同一条查询，只在载体里加一条
+`[exactly-two-criteria] 只派生两条准则：任务，以及方法的核心机制`：
+
+```
+                  改之前                       改之后
+criteria_version  cq_24947a5647b2915f          cq_6869a0b410657c68
+criteria          4 条（semantic_segmentation_  2 条（task, core_mechanism）
+                  task / superpixel_unit /
+                  region_based_strategy /
+                  superpixel_integration）
+score             0.4444                       0.4000
+tier              somewhat_relevant            somewhat_relevant
+```
+
+**载体有作用面，不只是文件存在。** 版本随内容改变，所以改前改后的结果
+按构造就是不可比的——不需要谁记得声明这件事。
+
+### 判据 4 — J0 与 J2 在同一批查询上的 Recall@k 都被记录下来 ✅
+
+`experiments/judge-ablation`，`--k 10`，`sources: ["arxiv"]`，
+`end_date: 2023-09-17`，候选 30 条（`max_papers_l3b`），gold 4 篇：
+
+```
+AutoScholarQuery_train_1          J0 recall 0.75   J2 recall 0.75   judged 30
+AutoScholarQuery_train_1_phrases  J0 recall 0.25   J2 recall 0.25   judged 2
+
+J0: Recall@10 0.5000 | Precision@10 0.4000 | F1 0.3810 | median 1163ms
+J2: Recall@10 0.5000 | Precision@10 0.4000 | F1 0.3810 | median 543765ms
+```
+
+§5.6 那条硬要求（必须报 judge-free 消融）**满足**：两组一起报，
+而且脚本的输出末尾把"为什么必须一起报"打出来，不指望读者记得。
+
+### 判据不检验、但这次测出来的一件事：Recall@k 看不见判别器做了什么
+
+两组的 Recall@10 完全相同，**而判别器实际上大幅重排了**：
+
+```
+J0  2112.05975 > 2111.12940 > 2107.11769 > 2203.10730 > 1810.09726 > 2010.01884 > ...
+J2  2111.12940 > 2010.01884 > 2002.06583 > 2307.07168 > 2112.05975 > 2203.10730 > 1810.09726 > ...
+```
+
+三篇 gold 被明显往上提（`2010.01884` 从 #6 到 #2，`2002.06583` 从 #9 到 #3），
+top-10 的顺序和集合都变了。但三篇本来就在前 10 之内，
+所以 **Recall@10 不可能反映这次重排**。
+
+这不是判别器无效的证据，也不是有效的证据——**是指标选错了的证据**。
+`../prototype.md` §6.3 已经有下界校正 nDCG，J 轴要报的应当是它或 MRR，
+而不是只报 Recall@k。这条与 §5.6 那条硬要求是一对：
+前者说"不能只报 J2"，这条说"不能只报 Recall"。
+**记进 `../experiments.md` 之前不下任何关于 J2 的结论。**
+
+另外两个数字值得留：J2 的中位耗时是 J0 的 **467 倍**（543765ms vs 1163ms），
+判 30 篇一条查询将近 9 分钟。官方权重里运行效率占 20%，
+所以 L3b 在当前形态下**不是一个可以默认开着的档位**——
+这正是 §4.1 写"预算充裕走 L3a + L3b"的原因，而 L3a 还不存在（G-10）。

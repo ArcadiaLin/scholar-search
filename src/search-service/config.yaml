@@ -28,6 +28,35 @@ limits:
     max_sections: 20
     max_section_chars: 2000
 
+# Relevance judging (L3b). The Configure edge for NP_k^judge: `carrier` points at
+# the preference file whose entries reach the judging prompt, and everything
+# numeric here is HP_k.
+#
+# `forced_level` is the J-axis operating surface. The agent normally decides how
+# much judging to buy (`judge_level` on the search tool) because that is a strategy
+# decision, but an ablation has to pin it: set this to `off` for the J0 arm and
+# `l3b` for the J2 arm, and the effective value travels in the response so a run
+# records which arm it was. Null means "obey the caller".
+#
+# One property to keep: nothing here registers a judge as an agent tool. See
+# `search_service/judge/__init__.py` for why that matters.
+judge:
+  enabled: true
+  forced_level: null
+  # Which configured LLM provider judges. Null uses the default provider.
+  provider: null
+  # Fixed at 0 by `prototype.md` §4.3, alongside a fixed prompt and structured
+  # output. Determinism here is a precondition for training, not a saving.
+  temperature: 0.0
+  # N_judge from `prototype.md` §4.1. L3a (N_sem = 100) and L3c (N_full = 8) are
+  # declared for provenance and not implemented; asking for them is reported as
+  # unsupported rather than silently served as L3b.
+  max_papers_l3b: 30
+  max_criteria_per_query: 8
+  # NP_k^judge. Relative to this file; the carrier lives with the other preference
+  # files because it is versioned by git like they are.
+  carrier: "../../widis/.widi-scholar/preference/np-judge.md"
+
 # Sidecar Reviewer detector thresholds (HP_k). Read by the scholar-search
 # extension through GET /review-config, once per episode.
 #

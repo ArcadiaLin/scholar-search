@@ -1,0 +1,26 @@
+[
+  {
+    "id": "AutoScholarQuery_train_1",
+    "query": "Could you provide me some works employs image patches and superpixels in region-based methods for semantic segmentation?",
+    "searchQuery": "region active learning semantic segmentation",
+    "endDate": "2023-09-17",
+    "sources": ["arxiv"],
+    "gold": {
+      "arxivIds": ["1810.09726", "2002.06583", "2010.01884", "1911.11789"],
+      "titles": ["CEREALS", "Reinforced active learning for image segmentation", "MetaBox+", "ViewAL"]
+    },
+    "note": "The verified recall set from backlog.md 1: this query returns 20 candidates containing three of the four gold papers, at ranks 7, 8 and 14. Score it at k < 30 or reordering cannot change Recall@k - every candidate would be inside the cut either way."
+  },
+  {
+    "id": "AutoScholarQuery_train_1_phrases",
+    "query": "Could you provide me some works employs image patches and superpixels in region-based methods for semantic segmentation?",
+    "searchQuery": "\"active learning\" \"semantic segmentation\" superpixel",
+    "endDate": "2023-09-17",
+    "sources": ["arxiv"],
+    "gold": {
+      "arxivIds": ["1810.09726", "2002.06583", "2010.01884", "1911.11789"],
+      "titles": ["CEREALS", "Reinforced active learning for image segmentation", "MetaBox+", "ViewAL"]
+    },
+    "note": "The narrow arm: four candidates, one of them gold. Kept because a judge that reorders a four-item list cannot help and should not hurt."
+  }
+]

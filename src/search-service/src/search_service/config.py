@@ -123,6 +123,35 @@ class ServiceConfig:
                     limits[section] = dict(values)
         return limits
 
+    def get_judge_config(self) -> dict[str, Any]:
+        """Return the judging configuration, merged over defaults.
+
+        This is where $NP_k^{judge} \\to \\theta^S_k$ actually happens: `carrier`
+        names the preference file whose entries reach the judging prompt, and the
+        numeric fields are $HP_k$. ``carrier_path`` is resolved against this
+        config file's directory so the pointer survives being run from anywhere.
+        """
+        configured = self._yaml.get("judge", {})
+        judge: dict[str, Any] = {
+            "enabled": True,
+            "forced_level": None,
+            "provider": None,
+            "temperature": 0.0,
+            "max_papers_l3b": 30,
+            "max_criteria_per_query": 8,
+            "carrier": "../../widis/.widi-scholar/preference/np-judge.md",
+        }
+        if isinstance(configured, dict):
+            for key, value in configured.items():
+                # `forced_level` and `provider` are meaningfully null, so unlike
+                # the review section this merge keeps explicit nulls.
+                judge[key] = value
+        carrier = judge.get("carrier")
+        judge["carrier_path"] = (
+            (Path(self.settings.config_file).resolve().parent / str(carrier)).resolve() if carrier else None
+        )
+        return judge
+
     def get_review_config(self) -> dict[str, Any]:
         """Return the Sidecar Reviewer detector thresholds, merged over defaults.
 

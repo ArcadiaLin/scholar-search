@@ -1203,8 +1203,12 @@ const extension: ExtensionDefinition = {
 						type: "string",
 						enum: ["off", "auto", "l3a", "l3b", "l3c"],
 						description:
-							"How much relevance judging to spend on the candidates. " +
-							"This service build implements no judge, so anything but 'off' is reported back as unsupported rather than silently ignored.",
+							"How much relevance judging to spend on the candidates. `l3b` grades each candidate " +
+							"against criteria derived from the query and re-orders by the result; `off` returns recall " +
+							"order. Judging costs a model call per candidate, so buy it when the candidate set is " +
+							"large enough that ordering matters. Tiers this service does not implement are reported " +
+							"back as unsupported rather than silently ignored, and the answer always says how many " +
+							"candidates were actually judged.",
 					},
 				},
 				required: ["query"],
@@ -1234,6 +1238,7 @@ const extension: ExtensionDefinition = {
 							topK: input.top_k,
 							endDate: input.end_date,
 							sources: input.sources,
+							judgeLevel: input.judge_level,
 						},
 						{ signal: context.signal ?? undefined },
 					);
@@ -1243,12 +1248,23 @@ const extension: ExtensionDefinition = {
 				}
 
 				// Unsupported knobs are reported, never dropped in silence: an agent
-				// that thinks it bought judging would misread the candidate list.
+				// that thinks it bought judging would misread the candidate list. What
+				// is reported now comes from the service's own account rather than from
+				// a constant here, so the message cannot go stale against the build.
+				const judge = result.searchState.judge;
 				const notes: string[] = [];
-				if (input.judge_level !== undefined && input.judge_level !== "off") {
+				if (judge.judged > 0) {
 					notes.push(
-						`judge_level='${input.judge_level}' was requested but this Search Service build implements no ` +
-							"relevance judge, so the candidates below are unjudged. Treat the ranking as recall order, not relevance.",
+						`Judged ${judge.judged} of ${judge.considered} candidate(s) at ${judge.level} ` +
+							`(rubric ${judge.rubricVersion ?? "?"}, criteria ${judge.criteriaVersion ?? "?"}, ` +
+							`model ${judge.modelVersion ?? "?"}; ${judge.cacheHits} from cache). ` +
+							"The order below is relevance order for the judged papers, and recall order after them.",
+					);
+				} else if (judge.requestedLevel !== "off") {
+					notes.push(
+						`judge_level='${judge.requestedLevel}' was requested and nothing was judged` +
+							`${judge.level === judge.requestedLevel ? "" : ` (the service ran '${judge.level}')`}. ` +
+							"Treat the ranking as recall order, not relevance; the failures above say why.",
 					);
 				}
 				if (input.intent !== undefined) {
@@ -1278,8 +1294,10 @@ const extension: ExtensionDefinition = {
 						query: input.query,
 						subqueries: input.subqueries ?? [],
 						intent: input.intent ?? null,
-						judgeLevel: input.judge_level ?? "off",
-						judgeSupported: false,
+						judgeLevel: judge.level,
+						judgeRequestedLevel: judge.requestedLevel,
+						judgeSupported: judge.supported,
+						judgeAccount: judge,
 						papers: result.papers,
 						searchState: result.searchState,
 						elapsedMs: result.elapsedMs,

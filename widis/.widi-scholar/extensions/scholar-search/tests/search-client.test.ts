@@ -298,6 +298,68 @@ describe("searchMetadata response", () => {
 	});
 });
 
+describe("the judge account on a search", () => {
+	it("defaults to nothing judged rather than to judging having worked", async () => {
+		// A service build that does not report judging has not done any; assuming
+		// otherwise is how a capability gap sediments as "it looks finished" (D-09).
+		const scope = arrange(() => ({ status: 200, body: JSON.stringify({ papers: [], search_state: {} }) }));
+		const result = await clientFor(scope).searchMetadata({ query: "q" });
+
+		assert.equal(result.searchState.judge.supported, false);
+		assert.equal(result.searchState.judge.level, "off");
+		assert.equal(result.searchState.judge.judged, 0);
+		assert.equal(result.searchState.judge.rubricVersion, null);
+	});
+
+	it("carries what was judged, and under which instrument", async () => {
+		const scope = arrange(() => ({
+			status: 200,
+			body: JSON.stringify({
+				papers: [],
+				search_state: {
+					judge: {
+						level: "l3b",
+						requested_level: "auto",
+						supported: true,
+						considered: 30,
+						judged: 28,
+						cache_hits: 4,
+						rubric_version: "r3",
+						criteria_version: "cq_1a2b",
+						model_version: "vllm/qwen",
+					},
+				},
+			}),
+		}));
+		const result = await clientFor(scope).searchMetadata({ query: "q", judgeLevel: "auto" });
+
+		const judge = result.searchState.judge;
+		assert.equal(judge.level, "l3b");
+		assert.equal(judge.requestedLevel, "auto");
+		assert.equal(judge.judged, 28);
+		assert.equal(judge.considered, 30);
+		assert.equal(judge.cacheHits, 4);
+		// The three versions are what make the number a measurement rather than a score.
+		assert.deepEqual([judge.rubricVersion, judge.criteriaVersion, judge.modelVersion], [
+			"r3",
+			"cq_1a2b",
+			"vllm/qwen",
+		]);
+	});
+
+	it("sends judge_level only when the caller set it", async () => {
+		const withLevel = arrange(() => ({ status: 200, body: searchFixture }));
+		await clientFor(withLevel).searchMetadata({ query: "q", judgeLevel: "l3b" });
+		assert.equal((withLevel.calls()[0]?.body as Record<string, unknown>).judge_level, "l3b");
+
+		const without = arrange(() => ({ status: 200, body: searchFixture }));
+		await clientFor(without).searchMetadata({ query: "q" });
+		// Absent, not `"off"`: not constraining a knob is a different request from
+		// constraining it to its default.
+		assert.equal("judge_level" in (without.calls()[0]?.body as Record<string, unknown>), false);
+	});
+});
+
 describe("getPaper", () => {
 	it("gets the encoded id from /paper and reports which source answered", async () => {
 		const scope = arrange(() => ({ status: 200, body: paperFixture }));

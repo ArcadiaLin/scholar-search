@@ -192,6 +192,26 @@ export interface FailureRecord {
 	readonly message: string;
 }
 
+/**
+ * What the relevance judge did on this call.
+ *
+ * Reported rather than assumed, and reported even when nothing was judged: "l3b
+ * was requested" and "thirty papers were judged under rubric r3 and criteria
+ * cq_1a2b" are different facts, and the J axis has no observable without the
+ * second (`docs/develop/plan.md` §5.2).
+ */
+export interface JudgeAccountRecord {
+	readonly level: string;
+	readonly requestedLevel: string;
+	readonly supported: boolean;
+	readonly considered: number;
+	readonly judged: number;
+	readonly cacheHits: number;
+	readonly rubricVersion: string | null;
+	readonly criteriaVersion: string | null;
+	readonly modelVersion: string | null;
+}
+
 /** The service's account of what the search did - the Service half of the public trajectory. */
 export interface SearchStateRecord {
 	readonly issuedQueries: readonly IssuedQueryRecord[];
@@ -200,6 +220,7 @@ export interface SearchStateRecord {
 	readonly recalled: number;
 	readonly returned: number;
 	readonly failures: readonly FailureRecord[];
+	readonly judge: JudgeAccountRecord;
 }
 
 export interface SearchResult {
@@ -216,6 +237,13 @@ export interface SearchMetadataInput {
 	readonly sources?: readonly string[];
 	readonly timeoutMs?: number;
 	readonly providerParams?: Readonly<Record<string, Record<string, unknown>>>;
+	/**
+	 * How much relevance judging to buy. Forwarded, not interpreted: deciding the
+	 * budget is the agent's strategy, executing the judging is the service's
+	 * implementation, which is why no model or prompt appears in this shape
+	 * (`docs/prototype.md` §7.1).
+	 */
+	readonly judgeLevel?: string;
 }
 
 export interface PaperLookupResult {
@@ -788,6 +816,24 @@ function parseSearchState(value: unknown): SearchStateRecord {
 		recalled: numberOr(counts.recalled, 0),
 		returned: numberOr(counts.returned, 0),
 		failures: parseFailures(source.failures),
+		judge: parseJudgeAccount(source.judge),
+	};
+}
+
+function parseJudgeAccount(value: unknown): JudgeAccountRecord {
+	const source = isRecord(value) ? value : {};
+	return {
+		level: typeof source.level === "string" ? source.level : "off",
+		requestedLevel: typeof source.requested_level === "string" ? source.requested_level : "off",
+		// Defaults to false: a service build that does not report judging has not
+		// done any, and assuming otherwise is how "it looks finished" happens.
+		supported: source.supported === true,
+		considered: numberOr(source.considered, 0),
+		judged: numberOr(source.judged, 0),
+		cacheHits: numberOr(source.cache_hits, 0),
+		rubricVersion: nullableString(source.rubric_version),
+		criteriaVersion: nullableString(source.criteria_version),
+		modelVersion: nullableString(source.model_version),
 	};
 }
 
@@ -820,6 +866,7 @@ export function createServiceClient(options: ServiceClientOptions): ServiceClien
 			if (input.sources && input.sources.length > 0) body.sources = [...input.sources];
 			if (input.timeoutMs !== undefined) body.timeout_ms = input.timeoutMs;
 			if (input.providerParams) body.provider_params = input.providerParams;
+			if (input.judgeLevel !== undefined) body.judge_level = input.judgeLevel;
 
 			const payload = await requestJson(url, {
 				fetch: fetchImpl,

@@ -11,8 +11,22 @@
 ```
 widis/.widi-scholar/preference/
 ├── README.md        本文件。不注入任何 agent 的上下文。
-└── np-agent.md      $NP_k^{agent}$：策略先验，逐条可读、可改、可关。
+├── np-agent.md      $NP_k^{agent}$：检索策略先验，逐条可读、可改、可关。
+└── np-judge.md      $NP_k^{judge}$：判别准则先验。
 ```
+
+**两个载体的消费者不同，这决定了它们的通路不同**：
+
+| | `np-agent.md` | `np-judge.md` |
+| --- | --- | --- |
+| 谁读 | 检索 agent | Search Service 的判别层 |
+| 怎么到 | `profiles/search.md` 的 `projectContext`，进系统提示词 | `config.yaml` 的 `judge.carrier` 指针，进判别 prompt |
+| 版本行 | `<!-- np-version: k -->` | `<!-- npj-version: k -->` |
+| 版本的作用 | 标记条目集合的第几版 | 同上，**另外**：判别层把文件内容哈希进 `criteria_version` |
+
+第二个载体为什么不直接写进 `config.yaml`：那会抹掉 `Configure` 这条边——
+$NP^{judge}$ 与 $HP$ 就成了同一个东西。理由全文见
+`../../../docs/develop/decisions.md` **D-24**。
 
 `np-agent.md` 由 `profiles/search.md` 的 `projectContext` 引用：
 
@@ -40,7 +54,10 @@ agent dir 优先、然后 cwd 及其祖先目录，所以这个相对路径落�
 1. **版本号是单调整数**，从 `0` 开始。`0` 表示"载体已存在，但还没有任何条目"——
    也就是 S4 结束时的状态。
 2. **每次改动条目就 +1**，并且**单独一个 commit**，message 首行包含 `[NP v<k>]`。
-   一次 commit 只推进一个版本。
+   一次 commit 只推进一个版本。这条与"一个 stage 一个 commit"冲突时，
+   本条优先——理由见 `../../../docs/develop/decisions.md` **D-23**。
+   **唯一的例外是载体的第 1 版**：它没有前一版可 diff，
+   而且新载体通常与读它的代码同时才有意义，所以 v1 可以与代码同一个 commit。
 3. 版本号只在**条目集合**变化时推进。改错别字、调整本文件的说明文字不算。
 
 为什么用注释而不是 YAML frontmatter：这个文件会被整体注入系统提示词，

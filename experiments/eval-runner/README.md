@@ -73,6 +73,11 @@ node experiments/eval-runner/score.mjs --run runs/eval/train-20/run.json --k 20
 `--trace-dir` 覆盖池子与轨迹的落点（经 `SCHOLAR_TRACE_DIR` 传给 extension）。
 默认是 `<out>/trajectories`，这样两次 run 的答案不会互相顶掉。
 
+**这是端到端那条路**：agent 自己写查询、自己决定判别档位、自己维护答案池。
+它测的是"agent 带着这些部件做得如何"。判别器**本身**做了什么，
+在 `../judge-ablation/`——那条路直接打 Service、候选集受控，
+两者不能互相替代，也不能混着报（决策 D-26）。
+
 ## 记录了什么
 
 **Provenance**（`AGENTS.md` §5.3 要求的每一项，全部来自 RPC）：

@@ -144,6 +144,56 @@ describe("what the trace does record", () => {
 		assert.deepEqual(snapshot.calls[0]?.searchState?.filters.subqueries, ["sub"]);
 	});
 
+	it("carries the judge's account when judging ran", () => {
+		// The J axis has no observable without this: "l3b was requested" and "thirty
+		// papers were judged under rubric r3" support different conclusions
+		// (`docs/develop/plan.md` §5.2, fourth missing piece).
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({
+				judge: {
+					level: "l3b",
+					requestedLevel: "l3b",
+					judged: 28,
+					considered: 30,
+					rubricVersion: "r3",
+					criteriaVersion: "cq_1a2b",
+					modelVersion: "vllm/qwen",
+				},
+			}),
+			isError: false,
+		});
+
+		const judge = trace.snapshot().calls[0]?.searchState?.judge;
+		assert.equal(judge?.judged, 28);
+		assert.equal(judge?.considered, 30);
+		assert.deepEqual([judge?.rubricVersion, judge?.criteriaVersion, judge?.modelVersion], [
+			"r3",
+			"cq_1a2b",
+			"vllm/qwen",
+		]);
+	});
+
+	it("leaves the judge out of the trace when nothing was asked for", () => {
+		// An `off` account on every call would be noise in a trace whose job is to
+		// stay readable.
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({ judge: { level: "off", requestedLevel: "off", judged: 0, considered: 0 } }),
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().calls[0]?.searchState?.judge, undefined);
+	});
+
 	it("carries the answer pool, and the latest state of it wins", () => {
 		// The pool reaches the trace because it is written through a tool call, so
 		// nothing new had to be allowed in - which is the argument `plan.md` §3.5

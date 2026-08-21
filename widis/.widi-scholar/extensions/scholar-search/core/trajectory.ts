@@ -69,6 +69,25 @@ export interface TraceSearchState {
 		readonly errorType: string;
 		readonly message: string;
 	}[];
+	/**
+	 * What the relevance judge did on this call, when it did anything.
+	 *
+	 * In the trace because the J axis has no observable otherwise: the number of
+	 * papers judged, and under which rubric and criteria version, is what
+	 * distinguishes a run that bought judging from one that only asked for it
+	 * (`docs/develop/plan.md` §5.2, fourth missing piece).
+	 */
+	readonly judge:
+		| {
+				readonly level: string;
+				readonly requestedLevel: string;
+				readonly judged: number;
+				readonly considered: number;
+				readonly rubricVersion: string | null;
+				readonly criteriaVersion: string | null;
+				readonly modelVersion: string | null;
+		  }
+		| undefined;
 }
 
 /** What the episode cost, in the only currency this system actually meters: calls. */
@@ -239,6 +258,23 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 			});
 		}
 	}
+	const judgeSource = isRecord(state.judge) ? state.judge : undefined;
+	// Only when judging was asked for at all: an `off` account on every call would
+	// be noise in a trace whose whole job is to stay readable.
+	const judge =
+		judgeSource === undefined ||
+		((judgeSource.requestedLevel ?? "off") === "off" && (judgeSource.judged ?? 0) === 0)
+			? undefined
+			: {
+					level: typeof judgeSource.level === "string" ? judgeSource.level : "off",
+					requestedLevel: typeof judgeSource.requestedLevel === "string" ? judgeSource.requestedLevel : "off",
+					judged: typeof judgeSource.judged === "number" ? judgeSource.judged : 0,
+					considered: typeof judgeSource.considered === "number" ? judgeSource.considered : 0,
+					rubricVersion: typeof judgeSource.rubricVersion === "string" ? judgeSource.rubricVersion : null,
+					criteriaVersion: typeof judgeSource.criteriaVersion === "string" ? judgeSource.criteriaVersion : null,
+					modelVersion: typeof judgeSource.modelVersion === "string" ? judgeSource.modelVersion : null,
+				};
+
 	return {
 		issuedQueries: issued,
 		selectedSources: Array.isArray(state.selectedSources)
@@ -248,6 +284,7 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 		recalled: typeof state.recalled === "number" ? state.recalled : 0,
 		returned: typeof state.returned === "number" ? state.returned : 0,
 		failures,
+		judge,
 	};
 }
 
