@@ -49,7 +49,7 @@
 
 | 日期 | 是什么 | 证据 | 为什么现在不修 |
 | --- | --- | --- | --- |
-| 2026-08-21 | **AND 连接对整句自然语言查询过严。** `build_search_query` 会把一句 15 词的提问变成 15 个 AND 词项，命中率大概率为零 | `AutoScholarQuery_train_1` 的原问句共 17 词 | `plan.md` §2 与 `backlog.md` F-1 指定的修法就是 AND；缓解手段（停用词表、词项数上限、自动降级成 OR）都是新的检索设计，不在计划里。已经用工具描述把 agent 引向词项式查询，实测 4/4 成立。**若 S10 的 Recall@k 暴露出这条，它是一个新的 F 条目，不是 F-1 的一部分** |
+| 2026-08-21 | **AND 连接对整句自然语言查询过严。** `build_search_query` 会把一句 15 词的提问变成 15 个 AND 词项，命中率大概率为零 | `AutoScholarQuery_train_1` 的原问句共 17 词 | `plan.md` §2 与 `backlog.md` F-1 指定的修法就是 AND；缓解手段（停用词表、词项数上限、自动降级成 OR）都是新的检索设计，不在计划里。已经用工具描述把 agent 引向词项式查询，实测 4/4 成立。**已发生**：S12 的 J 轴消融把它变成了实测（原问句召回 0 条），按当时说的记成新条目 **F-13**，不并进 F-1 |
 | 2026-08-21 | **本仓库的 Python 在当前 ruff 下不是 format-clean。** `uv run ruff format --check .` 报 18 个文件要重排，其中 `plugins/serper.py` / `plugin_loader.py` / `tests/test_serper_plugin.py` 等**本次未改动** | 基线即红；差异全是 `hug_parens_with_braces_and_square_brackets` 这一条（`f({...})` vs `f(\n{...}\n)`） | `ruff>=0.12,<1` 是浮动区间，仓库是用另一个 ruff 版本排的。全仓重排会盖住修复本身的 diff；新写的代码沿用了仓库现有风格。`uv run ruff check .`（lint）全绿 |
 | 2026-08-21 | **`npm run check:widis` 的 biome 半在本检出上必红。** 本地 `core.autocrlf=true`，工作区文件是 CRLF，biome 的 formatter 期望 LF，于是**每个文件**都报 format 差异（含 `themes/*.json` 这类未改动文件） | `git config core.autocrlf` → `true`；`xxd widis/.widi-scholar/themes/prism.json` 里是 `0d0a` | 这是检出配置，不是仓库内容；改仓库去迁就它是错的方向。已用 `biome lint --error-on-warnings`（对行尾不敏感）+ `tsgo --noEmit` 覆盖，两者全绿 |
 | 2026-08-21 | **`pytest` 在设了 `all_proxy=socks5://...` 的 shell 里 39 个用例失败。** httpx 读环境代理，缺 `socksio` 就抛 ImportError | `ImportError: Using SOCKS proxy, but the 'socksio' package is not installed` | 是本机 shell 环境，不是仓库缺陷。跑法：`all_proxy= uv run pytest -q` |
