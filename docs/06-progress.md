@@ -17,7 +17,7 @@
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
 | S8 | Reviewer 通道 | DONE | `2bc0046` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
-| S9 | RPC 评测入口 | DONE | `PENDING_S9` | 只走 RPC 帧不读 session；§5.3 provenance 逐项落地；失败样本进分母 |
+| S9 | RPC 评测入口 | DONE | `fc225e9` | 只走 RPC 帧不读 session；§5.3 provenance 逐项落地；失败样本进分母 |
 
 状态取值：`TODO` / `IN_PROGRESS` / `DONE` / `BLOCKED`。
 `IN_PROGRESS` 必须在备注里写清做到哪一步；`BLOCKED` 必须写清卡在哪、试过什么、需要什么。
@@ -863,7 +863,7 @@ benchmark 可以无头驱动 widi-scholar 了。
     `prompt` 的完成 + `dispose` 作为样本终止条件，不依赖 `wait_tree_idle`，
     该问题不影响评测路径（评测时 `SCHOLAR_REVIEWER` 默认关闭）。
 
-- commit: `PENDING_S9`
+- commit: `fc225e9`
 
 
 
