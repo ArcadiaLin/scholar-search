@@ -16,7 +16,7 @@
 | S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
 | S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
-| S8 | Reviewer 通道 | DONE | `PENDING_S8` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
+| S8 | Reviewer 通道 | DONE | `2bc0046` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
 | S9 | RPC 评测入口 | TODO | | |
 
 状态取值：`TODO` / `IN_PROGRESS` / `DONE` / `BLOCKED`。
@@ -804,7 +804,7 @@ Reviewer 旁路通道跑起来了。
   但 S9 的评测 runner 需要一个明确的 episode 终止条件，
   不能依赖 `wait_tree_idle`。记在这里给 S9。
 
-- commit: `PENDING_S8`
+- commit: `2bc0046`
 
 
 
