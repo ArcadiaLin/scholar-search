@@ -12,7 +12,7 @@
 | F-2 全部 provider 失败时丢弃原因 | DONE | `8bc69de` |
 | F-10 `expand_citations` 不接受其他工具的 id | DONE | `8bc69de` |
 | S10 答案池与召回评测回路 | DONE† | `599f351`（判据 4 后半缺口 → G-6） |
-| S11 Reviewer v0 与 $NP_0$ 重写 | TODO | |
+| S11 Reviewer v0 与 $NP_0$ 重写 | DONE† | `cd5d0d5` + `382d69b`（判据 3、8 缺口 → G-7、G-8） |
 | S12 $NP^{judge}$ 载体与 L3b 判别层 | TODO | |
 
 ## 2. 决策
@@ -37,7 +37,7 @@
 | 2026-08-21 | `core/answer-pool.ts` | 重复 `add` 同一篇 → 更新 `why`，但 `addedByToolCall` 保留**首次**提交的那次调用 | 溯源要回答"这篇是哪次检索找到的"，那是第一次；而 `why` 的当前值才是当前判断 | 只影响答案池 |
 | 2026-08-21 | `core/answer-pool.ts` | 移除后再加回来，`removed` 里的那条**不删** | 一次被推翻的判断本身就是 $NP^{judge}$ 要的带出处负例（`plan.md` §3.5 第四条） | 只影响答案池 |
 | 2026-08-21 | `core/trajectory.ts` | `PublicSearchTrace` 加 `answerPool` 投影字段 | 不是白名单扩宽：池子是**经工具调用**写的，内容本来就在 args 里；这只是把它投影成可读形状，让"覆盖不足"从推断变成读出（`plan.md` §3.5 第三条） | **实验对照**（`.json` 轨迹多了一个字段） |
-| 2026-08-21 | `experiments/eval-runner/run.mjs` | 每条结果记 `agentId` 与 `gold`；`SCHOLAR_TRACE_DIR` 默认指到 `<out>/trajectories` | 打分器只有靠 `agentId` 才能找到 `<agentId>.answer.json`；默认分目录则两次 run 的答案不会互相顶掉 | **实验对照**（`run.json` 的记录格式变了，`RUNNER_VERSION` 未升——见下方缺口一节） |
+| 2026-08-21 | `experiments/eval-runner/run.mjs` | 每条结果记 `agentId` 与 `gold`；`SCHOLAR_TRACE_DIR` 默认指到 `<out>/trajectories` | 打分器只有靠 `agentId` 才能找到 `<agentId>.answer.json`；默认分目录则两次 run 的答案不会互相顶掉 | **实验对照**（`run.json` 的记录格式变了；`RUNNER_VERSION` 已随之升到 2，见 §6） |
 | 2026-08-21 | `experiments/eval-runner/score.mjs` | `--k` 按 agent 写入池子的**顺序**截断 | 池子是 agent 自己建的列表，换任何别的顺序打的都是一个没人产出过的排名 | **实验对照**（k 的语义） |
 | 2026-08-21 | `experiments/eval-runner/score.mjs` | `poolStatus` 区分 `empty` 与 `never-written` | 同样是 0 分，但"没调过这个工具"和"调了没提交"是两种不同的诊断，B-4 说的正是前者 | 只影响打分输出 |
 | 2026-08-21 | `package.json` | 新增 `test:experiments` 并挂进 `npm test` | eval-runner 的转换与打分是有行为契约的代码，之前完全没有测试入口 | 只影响测试入口 |
