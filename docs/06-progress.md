@@ -38,6 +38,11 @@
 每条的格式固定：设计要求 → 实际实现 → 后果（尤其是哪条实验轴因此失去测量对象）
 → 补上它需要什么。
 
+**另见 `docs/08-retrieval-defects.md`**（`F-1..F-7`）。那份文档记的是另一类问题：
+不是"设计要求没落地"，而是**已落地的部分本身有缺陷**——2026-08-21 的首次真实
+人机会话把它们暴露了出来，其中 F-1（arXiv 查询退化成 OR）会让 L0 召回层
+系统性漏掉正确答案，在修掉它之前 B/E/J/M 四条轴上的对比都是在噪声上做的。
+
 ### G-1 — Reviewer 的介入时机偏在 episode 之后（S8）
 
 **设计要求**：`design.md` §5.2 列了四个 checkpoint，**前三个都在 episode 中途**
@@ -1072,8 +1077,34 @@ benchmark 可以无头驱动 widi-scholar 了。
   `Application shutdown complete` 收尾。
   `npm run check:workspace` → `Checked 5 files. No fixes applied.`
 
+### 2026-08-21 — 首次真实人机会话，追出四个已落地部件的缺陷（不是 stage）
 
+`npm run widi:scholar` 落地后的第一次交互式使用。用户问的那句话逐字就是
+`references/datasets/pasa/AutoScholarQuery/train.jsonl` 第 2 行
+（`AutoScholarQuery_train_1`），四篇标准答案**全部有 arXiv ID**，
+所以这次会话意外地成了一次有对照的评测。实际召回 **1/4**。
 
+追因结果记在 `docs/08-retrieval-defects.md`（F-1..F-7 + 行为观察 B-1..B-5）。
+最关键的一条：`plugins/arxiv.py:205` 把查询拼成 `all:{query}`，
+arXiv 按 **OR** 展开（其 Atom 响应的 `<title>` 会回显解析结果，可直接验证），
+于是每次检索都是词袋 OR 查询。同一条主题查询：
+
+```
+当前实现（隐含 OR）        → 命中 0/4
+只把词间连接改成 AND       → 命中 3/4
+再加一条 superpixel 子查询 → 命中 4/4
+```
+
+没有用 OpenAlex、没有重排、没有判别器。**这意味着 S7 之后关于排序栈的任何
+对比都建立在一个系统性缺失正确答案的候选集上。**
+
+第二条：OpenAlex 的 rate_limit 不是速率问题。实测 429 响应头显示它已改为
+信用计费（匿名 IP 每天 1000 信用 = $0.10 = 100 次 list 查询，`Retry-After` 约 16 小时），
+`config.yaml` 的 `rate_limit_rps` 对它无效，而 `cost_model` 里的单价其实写对了、
+只是 `call_ledger.py` 没有去读。详见 F-3 / F-4。
+
+会话记录在 `widis/.widi-scholar/runs/.../20260821T072357Z_search-d9w6/session.jsonl`，
+该目录被 `.gitignore` 排除，所以 F-1..F-7 的证据全部内嵌在 08 文档里。
 
 
 
