@@ -13,7 +13,7 @@
 | F-10 `expand_citations` 不接受其他工具的 id | DONE | `8bc69de` |
 | S10 答案池与召回评测回路 | DONE† | `599f351`（判据 4 后半缺口 → G-6） |
 | S11 Reviewer v0 与 $NP_0$ 重写 | DONE† | `cd5d0d5` + `382d69b`（判据 3、8 缺口 → G-7、G-8） |
-| S12 $NP^{judge}$ 载体与 L3b 判别层 | TODO | |
+| S12 $NP^{judge}$ 载体与 L3b 判别层 | DONE† | `24bdcc0`（判据 2 后半缺口 → G-9；L3a/L3c → G-10） |
 
 ## 2. 决策
 
