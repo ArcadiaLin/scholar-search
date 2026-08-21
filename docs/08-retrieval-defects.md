@@ -247,18 +247,66 @@ x-ratelimit-prepaid-remaining-usd: 0
 而且慢得不能用：`per_page=100` 走代理单次 >25s（httpx 超时是 30s），
 8 并发时超过 2 分钟无响应。配好 key 之后 **OpenAlex 应当走直连**。
 
-**补上它需要**（按成本从低到高）：
+**补上它需要**：
 
-1. **注册免费账号拿 API key**，设 `OPENALEX_API_KEY`。预算从 $0.10/天 升到
-   **$1/天**（约 1000 次 list 查询），不需要付款方式。一次完整检索约 20–50 次
-   list 查询，**这一步大概率就够日常开发和小规模评测用**；
-2. 同时设 `OPENALEX_MAILTO` 进 polite pool，并把 OpenAlex 的出站排除在代理之外；
-3. 不够再在 pricing 页按 **$1 增量**买预付额度（免费额度用完后才扣，
-   购买后 3 个月过期）。跑几百条 AutoScholarQuery 的全量评测时才需要；
-4. 代码侧：429 时读 `Retry-After`，超过阈值就**不重试**并把"今天不可用"
-   这个事实上报给调用方（配合 F-2、F-4）。
+1. ~~注册免费账号拿 API key~~ —— **key 早就有了，是配置路径断了，见 F-8（已修）。**
+   修好之后实测：`x-ratelimit-limit: 10000` / `limit-usd: 1`，
+   即 **每天 1000 次 list 查询**，且直连可用，无需代理。这一步已经完成；
+2. 设 `OPENALEX_MAILTO` 进 polite pool（目前仍为空），并确保 OpenAlex 的出站
+   不走代理——F-8 修复后直连已经能通，代理只会拖慢它；
+3. 预算不够时再在 pricing 页按 **$1 增量**买预付额度（免费额度用完后才扣，
+   购买后 3 个月过期）。以 $1/天 ≈ 1000 次 list 查询估算，
+   跑几百条 AutoScholarQuery 的全量评测才可能需要；
+4. 代码侧（**未做**）：429 时读 `Retry-After`，超过阈值就**不重试**并把
+   "今天不可用"这个事实上报给调用方（配合 F-2、F-4）。
 
 年度 Member+（$100/天预算）对本项目的规模是浪费。
+
+---
+
+## F-8 — `.env` 按进程 cwd 解析，凭据从未被读到（已修）
+
+**现象**：`.env` 里 `OPENALEX_API_KEY` 一直有值，但每一次 OpenAlex 调用都是匿名的。
+F-3 中"第一次调用就 429"的直接原因就是这个——撞的是 $0.10/天 的匿名 IP 池，
+而不是 key 自己的 $1/天。
+
+**证据**：
+
+```
+从 src/search-service 启动（run-scholar.mjs 的实际 cwd）→ openalex_api_key 长度=0  空
+从仓库根启动（.env 所在处）                              → openalex_api_key 长度=22 有值
+```
+
+**根因**：`config.py` 的 `env_file=".env"` 是**相对路径**，pydantic-settings
+按进程工作目录解析。而 `scripts/run-scholar.mjs:63` 起 uvicorn 时用
+`cwd: src/search-service`——**这是对的且不能改**，因为
+`config_file: "./config.yaml"` 正靠它解析。仓库的 `.env` 在根目录，
+两者永远对不上。`SERPER_API_KEY` 同理（Serper 当前停用，所以没暴露出来）。
+
+注入链路本身没问题：`config.py:116-117` 确实把 `api_key` / `mailto`
+塞进了 plugin config。断的只有这一处路径。
+
+**为什么藏了这么久**：失败是完全静默的。`api_key` 取不到就退化成 `None`，
+匿名调用在配额未耗尽时**照常返回 200**，只有配额耗尽后才以 429 的形式浮现——
+而 429 又长得像"速率太快"，把排查引向了 `rate_limit_rps`。
+这是 F-2（错误信息被吞）在配置层的同构问题。
+
+**已修**：`config.py` 增加 `_env_files()`，同时读仓库根的 `.env` 与
+service 本地的 `.env`（后者优先，因为"放在 `config.yaml` 旁边"是更具体的声明）。
+修复后实测：
+
+```
+env 文件解析为: ['/root/projs/scholar-search/.env', '.env']
+openalex_api_key 长度=22 -> 有值
+注入 plugin 的 api_key: 有值
+```
+
+直连带 key 调用 → `HTTP/2 200`，`x-ratelimit-limit: 10000`、`remaining: 9990`。
+`pytest -q` 在 `src/search-service` 下 111 passed。
+
+**遗留**：`OPENALEX_MAILTO` 仍未设。另外这类"凭据没读到"应当**在启动时就报**，
+而不是等到第一次调用失败——建议 Service 启动时对每个 `enabled` 且
+声明需要凭据的 plugin 检查一次，缺失就写进启动日志与 `/health`。这条未做。
 
 ---
 
@@ -423,6 +471,7 @@ on the call but does not affect ranking in this build.
 | F-1 | **新**。此前未被任何 stage 验收覆盖——S2/S7 验的是"端点通、返回结构对"，没有验召回质量 |
 | F-2 | **新**。S6 验的是 $\bar{\tau}_t$ 的过滤白名单，没有验失败路径的信息完整性 |
 | F-3 / F-4 | 扩展 G-5（$\theta^S_k$ 未参数化）到预算维度，并给出具体数字 |
+| F-8 | **新，且已修**。此前所有 stage 的验收都跑得通，因为匿名调用在配额未耗尽时正常返回——静默降级不会让任何一条判据变红 |
 | F-5 | 与 G-4 相关；新增的是评测协议侧的时间窗映射 |
 | F-6 | 是 G-3（`intent` 无作用面）与 G-5 的量化后果，非新缺口 |
 | B-5 | 为 G-1 提供了一个真实案例 |
@@ -442,8 +491,9 @@ on the call but does not affect ranking in this build.
    改动最小、收益最大，且 §1 已经给出可直接用作回归断言的期望值（0/4 → 3/4 单查询）。
 2. **F-2：`AggregationError` 带上 `failures`。**
    让 agent 能区分限流 / 无结果 / 源故障。约十几行。
-3. **F-3 第 1–2 步：注册 OpenAlex 免费 key，设 `OPENALEX_API_KEY` 与
-   `OPENALEX_MAILTO`，OpenAlex 走直连。** 零代码，先不付费。
+3. ~~**F-3：注册 OpenAlex 免费 key**~~ —— **已完成**：key 本来就有，
+   断的是 `.env` 路径（F-8，已修）。剩下的只有设 `OPENALEX_MAILTO`
+   和确保 OpenAlex 不走代理。先不付费。
 4. **建立召回评测回路**：AutoScholarQuery → eval runner 的转换脚本
    （含 F-5 的 `endDate` 映射）+ 按 `answer_arxiv_id` 计算 Recall@k。
    有了它，1–3 的效果可以被量化，后续的排序栈实验才有意义。

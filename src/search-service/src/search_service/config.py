@@ -18,12 +18,32 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from search_service.exceptions import ConfigError
 
 
+def _env_files() -> tuple[Path, ...]:
+    """The ``.env`` files to read, lowest priority first.
+
+    A bare ``".env"`` resolves against the **process** working directory, and the
+    service is not started from the directory that holds the credentials:
+    ``scripts/run-scholar.mjs`` runs uvicorn with ``cwd`` set to
+    ``src/search-service`` so that ``config_file="./config.yaml"`` resolves, while
+    the repository's ``.env`` sits at the root. The result was silent and
+    expensive - ``openalex_api_key`` stayed empty, every OpenAlex call went out
+    anonymous, and anonymous callers get the per-IP free budget (1000 credits a
+    day, i.e. 100 list queries) instead of the key's own. It looked like rate
+    limiting; it was a path.
+
+    So both locations are read. The service-local file comes last because a
+    ``.env`` placed next to ``config.yaml`` is the more specific statement.
+    """
+    repository_root = Path(__file__).resolve().parents[4]
+    return (repository_root / ".env", Path(".env"))
+
+
 class Settings(BaseSettings):
     """Environment-variable based settings."""
 
     model_config = SettingsConfigDict(
         env_prefix="SEARCH_",
-        env_file=".env",
+        env_file=_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
