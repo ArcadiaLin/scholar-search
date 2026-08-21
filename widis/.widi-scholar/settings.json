@@ -1,6 +1,6 @@
 {
-	"defaultProvider": "kimi-coding",
-	"defaultModel": "k3",
+	"defaultProvider": "vllm",
+	"defaultModel": "qwen3.6-35b-a3b",
 	"defaultThinkingLevel": "medium",
 	"defaultProfile": "main",
 	"enabledProfiles": ["main", "research", "coder", "evaluator", "plan", "search", "reviewer"],
@@ -31,7 +31,7 @@
 	"themes": [],
 	"terminal": { "showImages": true, "imageWidthCells": 60, "clearOnShrink": false, "showTerminalProgress": false },
 	"images": { "autoResize": true, "blockImages": false },
-	"enabledModels": ["kimi-coding/*", "moonshot/*", "anthropic/*", "vllm/*"],
+	"enabledModels": ["vllm/*", "moonshot/*", "anthropic/*"],
 	"doubleEscapeAction": "tree",
 	"treeFilterMode": "default",
 	"editorPaddingX": 0,

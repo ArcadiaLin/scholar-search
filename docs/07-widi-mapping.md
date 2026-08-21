@@ -16,17 +16,19 @@
 | 设计概念 | WIDI 载体 | 实际路径 | 状态 |
 | --- | --- | --- | --- |
 | Main Search Agent | profile | `widis/.widi-scholar/profiles/search.md` | S3 已落地 |
-| $T^M$ 工具集 | extension 的 `registerTool` | `widis/.widi-scholar/extensions/scholar-search/index.ts` | S1/S2 四个，S7 补齐 |
+| $T^M$ 工具集 | extension 的 `registerTool` | `widis/.widi-scholar/extensions/scholar-search/index.ts` | S7 已补齐九个 |
 | $SP_M$ 静态部分 | profile body | `profiles/search.md` 正文 | S3 已落地 |
 | $NP_k^{agent}$ | profile `projectContext` 指向的受控文件 | `widis/.widi-scholar/preference/np-agent.md` | S4 载体，S5 内容 |
 | $PH_k$（偏好载体） | 同上 + git 历史 | 同上 | S4 已落地 |
-| $HP_k$ / $\theta^S_k$ | Service 配置，经工具入参传递 | `src/search-service/config.yaml` + 工具参数 | 部分（见 §4.3） |
-| Search Service | 已有的 Python HTTP 服务 | `src/search-service/` | 已有，S2 扩展 |
-| Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地 |
-| $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `SearchState` 已有；observer 见 S6 | 一半（见 §3.3） |
-| Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | 见 §3.4 | 未落地（S8） |
+| $HP_k$ / $\theta^S_k$ | Service 配置，经工具入参传递 | `src/search-service/config.yaml` + 工具参数 | 部分：排序权重与 tier 阈值仍硬编码在 `api/probe.py`（G-5） |
+| Search Service | 已有的 Python HTTP 服务 | `src/search-service/` | 已有，S2/S7 扩展到十个端点 |
+| Evidence Store | Service 侧 episode 作用域状态 | `src/search-service/`（见 §3.2） | 未落地（G-2） |
+| $\bar{\tau}_t$ | extension observer + Service 的 `SearchState` | `core/trajectory.ts` + `SearchState` | S6 已落地 |
+| Sidecar Reviewer | 另一个 profile + extension 的 observer/event bus | `profiles/reviewer.md` + `core/review.ts`（见 §3.4） | S8 通道已通；介入时机偏在 episode 之后（G-1） |
 
-"状态"列是**当下**的实话，不是计划。路线图的 stage 状态在 `06-progress.md`。
+"状态"列是**当下**的实话，不是计划。路线图的 stage 状态在 `06-progress.md`；
+`G-n` 指向该文件的"验收缺口"一节——那里记的是 stage 验收已通过、
+但本表所述的设计要求尚未满足的部分。
 
 ---
 
@@ -205,6 +207,18 @@ Main 全程没有它的 handle：`profiles/search.md` 的 `tools:` 里没有
 
 在线工具集见 `prototype.md` §7.2；**离线的六个工具在 held-out 阶段根本不注册**，
 不是注册了不用。
+
+**当前状态（S8 之后）**：上面这套结构全部落地了——`profiles/reviewer.md` 是独立
+agent、由 extension spawn、Main 的工具集里没有 `spawn_agent` 也没有 `send_message`、
+gate 是 `core/review.ts` 里的纯函数、$C^R_t \neq C^M_t$ 有逐片段查证的证据。
+
+**但触发时机还不对**：review 挂在 `agent_idle` 上，也就是 Main 已经产出最终 $SO$
+之后，而 `design.md` §5.2 的四个 checkpoint 有三个在 episode 中途。
+所以现在的 $A_t$ 影响不了它所审查的那次搜索，M 轴（在线拓扑）因此还没有测量对象。
+完整记录与补法见 `06-progress.md` 的 **G-1**。
+
+这一条要单独点明，是因为"通道通了"和"介入有作用面"看起来很像：
+两者都能产出一条 `provide_advice` 并落盘，区别只在于 Main 有没有机会读到它。
 
 ---
 

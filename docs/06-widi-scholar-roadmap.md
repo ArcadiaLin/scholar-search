@@ -94,9 +94,30 @@ jiti 无法从 `widis/` 解析裸 `typebox` 导入，且固定版本里 typebox 
 
 ```bash
 npm run bootstrap                     # 首次：初始化 submodule + npm ci + uv sync
-npm run widi:dev                      # 启动 Scholar TUI（TypeScript 源码）
+npm run build                         # widi:scholar 跑的是 dist
+npm run widi:scholar                  # ← 用这个：Search Service + 检索 agent TUI
+npm run widi:scholar:dev              # 同上，WIDI 跑 TypeScript 源码
 npm run test:widis                    # 跑所有 namespace extension 测试
 ```
+
+**`npm run widi:scholar` 是看这个原型的入口。** 它做三件事
+（`scripts/run-scholar.mjs`）：起 Python Search Service 并等它真的应答 `/health`、
+把地址经 `SCHOLAR_SEARCH_SERVICE_URL` 传给 extension、以 `--profile search`
+打开 TUI。退出 TUI 时它起的那个 Service 一起结束。
+
+为什么要合成一条命令：九个检索工具是 Search Service 的瘦客户端，
+Service 没起时它们**全部**失败，而失败信息（"服务不可达"）看起来像 extension
+的 bug。把两半绑在一起，这个误诊就不会发生。
+
+两个行为值得知道：已经在跑的 Service 会被复用而不是再起一个（先探 `/health`），
+退出时也不会去关别人的进程；uvicorn 的日志写到 `runs/logs/search-service.log`
+而不是终端，否则会把全屏 TUI 冲花。
+
+要开别的角色就传 profile，例如 `npm run widi:scholar -- --profile reviewer`；
+`main`（有 shell 与文件系统的通用 agent）是 `npm run widi`。
+
+`widi` / `widi:dev` / `widi:rpc` 保留不动——S9 的 eval runner 按名字调用
+`widi:rpc`，而且它们不该顺带起 Service：评测需要自己控制 Service 的地址与生命周期。
 
 单个 extension 的类型与格式检查（`npm run check` **不覆盖**动态加载的 extension）：
 
@@ -121,6 +142,28 @@ Core half 改完在 TUI 里 `/reload`；TUI half 改完重启应用。
 
 依赖关系是线性的：S<n> 依赖 S<n-1> 全部 DONE。
 每个 stage 都标了**独立价值**——即用户只取到这里、后面全不要，能得到什么。
+
+### 关于下面每个 stage 的"验收"
+
+**这些验收判据是必要条件，不是充分条件。** 它们检验的是"这条链路真的通了、
+真的在跑"，写得刻意可执行——一条命令、一个能贴进 progress 的输出。
+但**通过验收不等于对应的设计要求已经被满足**：判据在若干处比
+`design.md` / `prototype.md` 的要求宽。
+
+已经发生过的两个例子（S0–S9 跑完之后回看）：
+
+- S8 验"至少产生一条 `provide_advice`"——那验的是通道连通性，
+  不是 §5.2 要求的 checkpoint 时机；结果是通道通了而介入影响不到被审的那次搜索。
+- S5 验"轨迹形状明显不同"——没有预先规定观察量，于是观察量只能事后选，
+  得到的分离度不能当效应量。
+
+所以：**验收通过就照 §1.4 提交并继续，但如果你发现判据没覆盖到设计要求的某一部分，
+把差额写进 `06-progress.md` 的"验收缺口"一节**（那一节的格式在文件里），
+不要为了让它看起来完整而放宽或重新解释判据。一个带着已知缺口的 `DONE`
+是可用的；一个把缺口解释掉的 `DONE` 会让后面所有依赖它的实验结论失效。
+
+这条比"卡住就记 BLOCKED"更容易被漏掉：BLOCKED 是你走不下去，
+而这里你走得下去，只是走到的地方比设计要求浅一层。
 
 ---
 
