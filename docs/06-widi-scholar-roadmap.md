@@ -94,9 +94,29 @@ jiti 无法从 `widis/` 解析裸 `typebox` 导入，且固定版本里 typebox 
 
 ```bash
 npm run bootstrap                     # 首次：初始化 submodule + npm ci + uv sync
-npm run widi:dev                      # 启动 Scholar TUI（TypeScript 源码）
+npm run widi:scholar                  # 启动 Scholar TUI（dist，需先 npm run build）
+npm run widi:scholar:dev              # 同上，跑 TypeScript 源码
+npm run widi:search                   # 直接进检索 agent（--profile search）
 npm run test:widis                    # 跑所有 namespace extension 测试
 ```
+
+`widi:scholar*` 与更早的 `widi` / `widi:dev` / `widi:rpc` 是同一条命令——
+后者是 namespace 省略时的默认形态，保留是因为 S9 的 eval runner 按名字调用
+`widi:rpc`。新加的显式名字只是为了和 `widi:pasa` 对称。
+
+`widi:scholar` 开的是 `main` profile（一个有 shell 与文件系统的通用 agent）；
+**要看检索 agent 本身用 `widi:search`**，它的根 agent 就是 `profiles/search.md`，
+工具集只有那九个检索工具。任何一个入口都能加 `-- --profile <id>` 改 profile，
+例如 `npm run widi:scholar -- --profile reviewer`。
+
+检索工具要能真的返回东西，得另起一个终端跑 Search Service：
+
+```bash
+cd src/search-service && PYTHONPATH=src \
+  uv run uvicorn search_service.main:app --host 127.0.0.1 --port 8000
+```
+
+extension 从 `SCHOLAR_SEARCH_SERVICE_URL` 读地址，缺省 `http://127.0.0.1:8000`。
 
 单个 extension 的类型与格式检查（`npm run check` **不覆盖**动态加载的 extension）：
 
@@ -121,6 +141,28 @@ Core half 改完在 TUI 里 `/reload`；TUI half 改完重启应用。
 
 依赖关系是线性的：S<n> 依赖 S<n-1> 全部 DONE。
 每个 stage 都标了**独立价值**——即用户只取到这里、后面全不要，能得到什么。
+
+### 关于下面每个 stage 的"验收"
+
+**这些验收判据是必要条件，不是充分条件。** 它们检验的是"这条链路真的通了、
+真的在跑"，写得刻意可执行——一条命令、一个能贴进 progress 的输出。
+但**通过验收不等于对应的设计要求已经被满足**：判据在若干处比
+`design.md` / `prototype.md` 的要求宽。
+
+已经发生过的两个例子（S0–S9 跑完之后回看）：
+
+- S8 验"至少产生一条 `provide_advice`"——那验的是通道连通性，
+  不是 §5.2 要求的 checkpoint 时机；结果是通道通了而介入影响不到被审的那次搜索。
+- S5 验"轨迹形状明显不同"——没有预先规定观察量，于是观察量只能事后选，
+  得到的分离度不能当效应量。
+
+所以：**验收通过就照 §1.4 提交并继续，但如果你发现判据没覆盖到设计要求的某一部分，
+把差额写进 `06-progress.md` 的"验收缺口"一节**（那一节的格式在文件里），
+不要为了让它看起来完整而放宽或重新解释判据。一个带着已知缺口的 `DONE`
+是可用的；一个把缺口解释掉的 `DONE` 会让后面所有依赖它的实验结论失效。
+
+这条比"卡住就记 BLOCKED"更容易被漏掉：BLOCKED 是你走不下去，
+而这里你走得下去，只是走到的地方比设计要求浅一层。
 
 ---
 

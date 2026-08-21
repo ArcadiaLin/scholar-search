@@ -13,14 +13,140 @@
 | S2 | 核心检索工具 | DONE | `fae2073` | 途中给 Service 补了 `/paper/{id}` 与 subquery 扇出，并修了扇出暴露的并发缺陷 SV-01 |
 | S3 | search profile：工具集收紧 | DONE | `8bd31a4` + `8559903` | 正文只放 $SP_M$ 静态部分；S5 途中发现两段策略泄漏，已在 `8559903` 修正 |
 | S4 | 概念到实现映射 + Preference 载体 | DONE | `d990f67` | 只建载体与版本约定，条目内容归 S5 |
-| S5 | $NP_0^{agent}$ 条目化 | DONE | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3） |
+| S5 | $NP_0^{agent}$ 条目化 | DONE† | `9bec91a` + `4b46427` | 30 条条目；固定采样后验收通过，判据取调用构成而非总数（`provider_query` 全开 0/0/0 vs 全关 3/2/3）。判据为事后选定，见 G-3 |
 | S6 | 公开轨迹 $\bar{\tau}_t$ | DONE | `bb6773c` | observer 白名单过滤 + Service SearchState；私有推理逐项 grep 为 0 |
-| S7 | 其余检索工具 | DONE | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见 |
-| S8 | Reviewer 通道 | DONE | `2bc0046` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0 |
-| S9 | RPC 评测入口 | DONE | `fc225e9` | 只走 RPC 帧不读 session；§5.3 provenance 逐项落地；失败样本进分母 |
+| S7 | 其余检索工具 | DONE† | `ec7b377` | $T^M$ 补齐九个；Service 侧新增五个端点；有界性来自配置且夹取对模型可见。排序栈只有 L1 真实存在，见 G-5 |
+| S8 | Reviewer 通道 | DONE† | `2bc0046` | extension spawn 而非 Main spawn；一条 provide_advice 落地；Main 的 16 个 thinking block 取 30 片段查 Reviewer session，leaks 0。介入时机偏在 episode 之后，见 G-1 |
+| S9 | RPC 评测入口 | DONE† | `fc225e9` | 只走 RPC 帧不读 session；§5.3 provenance 逐项落地；失败样本进分母。产出不可复现，见 G-4 |
 
 状态取值：`TODO` / `IN_PROGRESS` / `DONE` / `BLOCKED`。
 `IN_PROGRESS` 必须在备注里写清做到哪一步；`BLOCKED` 必须写清卡在哪、试过什么、需要什么。
+
+`DONE` 的含义严格限定为：**该 stage 的落点已完成，且它自己在路线图里写明的验收命令通过。**
+它**不**意味着对应的设计概念已经完整落地——路线图的验收判据在若干处弱于
+`design.md` / `prototype.md` 的要求，通过那条判据不等于设计要求被满足。
+凡出现这种情况的 stage 标 `DONE†`，缺口逐条记在下一节，不折叠进备注。
+
+## 验收缺口
+
+这一节记的是"**stage 验收通过、但设计要求尚未满足**"的部分。
+
+单独成节而不是塞进备注里，是因为这两件事的性质不同：备注写的是这个 stage
+做了什么，而这里写的是**下一步必须补什么，以及在补上之前哪些实验结论不能下**。
+把它们混在一起，缺口就会随着状态表变绿而消失在视线外。
+
+每条的格式固定：设计要求 → 实际实现 → 后果（尤其是哪条实验轴因此失去测量对象）
+→ 补上它需要什么。
+
+### G-1 — Reviewer 的介入时机偏在 episode 之后（S8）
+
+**设计要求**：`design.md` §5.2 列了四个 checkpoint，**前三个都在 episode 中途**
+（初始召回完成 / 一轮候选合并或引文扩展完成 / 检测到覆盖不足、噪声突增、
+来源失衡或预算接近上限），第四个是"生成最终 $SO$ **之前**"。
+
+**实际实现**：
+
+- `index.ts` 的 `api.observe("agent_idle", ...)` 触发 review——即 Main 已经产出
+  最终 $SO$ **之后**；
+- `MAX_REVIEWS_PER_AGENT = 1`，一个 episode 只审一次；
+- 投递用 `precede`，建议落在**下一轮**的上下文里。
+
+也就是说 $A_t$ 里的 $t$ 实际恒等于 $T+1$。**这条建议不可能改变它所审查的那次搜索。**
+四个 checkpoint 一个都没落地，连第四个也不是——它在最终 $SO$ 之后而不是之前。
+
+**后果**：与 S9 的组合尤其要命。eval runner 每条查询 spawn 新 agent、prompt 一次、
+dispose，所以在评测路径上 Reviewer 的建议会被写进 `.review.json` 然后原地蒸发，
+没有任何一轮会读到它。**M 轴（在线拓扑）的 sidecar 组与无 sidecar 组在当前实现下
+输出完全相同，$\Delta_{\mathrm{sidecar}}$ 恒为 0。** 在补上 G-1 之前，
+任何关于 sidecar 在线贡献的结论都不能下。
+
+**为什么验收还是过了**：S8 的两条判据是"至少产生一条 `provide_advice`"与
+"Reviewer 上下文里没有 Main 的私有推理"。这两条验的是**通道连通性**与**隔离性**，
+两者都真的成立且证据充分。它们没有验的是**介入有没有作用面**——
+而那才是 §5.2 存在的理由。判据弱于设计，这是路线图的问题，不是执行的问题。
+
+**补上它需要**：
+
+1. checkpoint 判定从 `agent_idle` 移到工具执行边界（`tool_execution_end`），
+   按 §5.2 的三个条件判定是否触发；
+2. 投递改用能被**当前 episode** 读到的原语，同时不制造
+   "投递 → 唤醒 → 再次 idle → 再次 review"的回路（这正是当初选 `precede` 的原因，
+   换原语时必须重新解决这个问题）；
+3. `MAX_REVIEWS_PER_AGENT` 从"每 agent 一次"改成"每 episode 上限 N 次"，
+   与 §5.2 最后一条的调用次数限制对齐。
+
+### G-2 — Evidence Store 未落地，gate 的证据校验落在替代物上（S4 决策 / S7 / S8）
+
+**设计要求**：O-1 的决定（`design.md` §4.1、`search-service.md` §5.3、
+`07-widi-mapping.md` §3.2）——Evidence Store 是 episode 作用域的运行时状态，
+由 Service 持有，与 `RunSnapshot` 同生共死。
+
+**实际实现**：未落地。Service 至今没有 episode 概念，`get_budget` 的 `scope`
+如实标 `process` 而不是 episode。S8 需要"可引用的 id"才谈得上 gate 的证据校验，
+于是在 extension 侧做了 `TraceEvidence`（`core/trajectory.ts`）。
+
+`TraceEvidence` 本身**不违规**：它是轨迹的证据视图（只有 id、标题、来源、
+由哪次调用发现），不是 Store，也没有把候选集搬进 Agent 上下文。
+
+**后果**：Reviewer 只能引用**已经进过 Main 上下文**的论文 id。它看得到
+`recalled: 589 / returned: 110` 这样的差额，却无法对被丢弃的那 479 篇里的缺口
+提出任何可被 gate 接受的具体建议——因为那些 id 不在轨迹里。而"召回了但没进最终名单
+的那批里有没有系统性缺口"恰恰是 sidecar 最有价值的观察面。
+
+**补上它需要**：一个 episode 标识穿过工具入参到 Service，Service 侧按该标识维护
+Store 并在 `SearchState` 上挂出它的账目。这不属于任何已完成的 stage。
+
+### G-3 — S5 的验收判据是看到数据之后选定的（S5）
+
+**实际过程**：原判据"关掉全部条目与打开全部条目，轨迹形状明显不同"以调用总数衡量
+时不成立（全关 7–37，全开 22–40，区间大面积重叠）；固定采样后改用**调用构成**
+（`provider_query` 全开 0/0/0 vs 全关 3/2/3）才判定通过，n=3/组。
+
+**问题不在于结论错**，而在于观察量是在看过数据之后选的。这样得到的分离度不能
+当作效应量的估计——它至少一部分来自选择本身。当前记录足以支持
+"策略先验有作用面"这一定性判断，**不足以支持任何定量结论**。
+
+**补上它需要**：把观察量与重复次数写进 `experiments.md` 做**预注册**——先定
+判据再跑，而不是在 progress 里事后定。另外记一条已经发现的依赖问题：
+30 条条目里有 11 条讲引文扩展，而 `expand_citations` 到 S7 才注册，
+所以 S5 的锐利判据本来就应当排在 S7 之后——路线图的线性依赖假设在这里破了。
+
+### G-4 — S9 的产出不可复现：采样固定依赖仓库外的器材（S9 / U-03）
+
+**设计要求**：`experiments.md` 的等算力比较要求同一配置可重跑。
+
+**实际实现**：S9 的 runner 把 provenance 记全了（namespace、RPC protocol version、
+WIDI revision、profile、模型、extension 版本、生效预算、启动诊断、父仓库 revision
+与 dirty 标志），但**没有确定性**——同一条查询重跑时采样是自由的。
+固定采样目前只能靠 scratchpad 里一个强制写入采样参数的反向代理，**它不进仓库**。
+
+**后果**：S5 那张对照表无法在仓库内一键复现；将来任何用 S9 跑出来的数字同样如此。
+
+**补上它需要**：见 U-03。三条路径互斥，需要用户拍板选一条——
+改 vendored 的 `packages/agent`（需明确授权）、把 shim 变成仓库内的正式部件、
+或者在 vllm 服务端固定默认采样参数（最省事，但把实验配置放到了仓库之外）。
+
+### G-5 — 排序栈只有 L1 真实存在，判别器完全没有（S7）
+
+**设计要求**：`prototype.md` 的 L0–L3 排序栈——L0 资格过滤、L1 RRF 候选控制、
+L2 可训练特征融合、L3 预算内判别。
+
+**实际实现**：
+
+- **L1 真实存在**：`aggregator.py` 的 RRF（κ=60）。
+- **L2 / L3 没有**。`POST /rank` 是词面重叠加引用数先验的占位实现
+  （`api/probe.py` 的 `_relevance`），权重 `2.0 / 1.0 / 0.1` 与 tier 阈值
+  `0.6 / 0.2` 硬编码在函数里。它的 docstring 诚实标注了自己是 placeholder。
+- `judge_level` 参数存在但无实现，工具在传入非 `off` 时显式告知未实现——
+  **这个处理是对的**，不算缺口，只是说明判别器整个还不存在。
+
+**后果**：**B 轴（ranker）与 J 轴（judge tier）目前没有实现面**，对应的消融实验
+无法开始。另外 O-2 要求的敏感性筛选建立在"那批参数可配"之上，
+而现在其中一部分是代码里的常量——在参数外提之前，筛选协议跑不起来。
+
+**补上它需要**：单独讨论，不在本节展开。
+
+---
 
 ## 日志
 
@@ -865,8 +991,72 @@ benchmark 可以无头驱动 widi-scholar 了。
 
 - commit: `fc225e9`
 
+### 2026-08-21 — 维护：默认模型与 gitlink（不是 stage）
 
+审查合并后的分支状态时处理的两件遗留事，都不属于任何 stage。
 
+- **`packages/widi` gitlink 指回了不含 U-01 补丁的版本。** `76fb88d` 把它写成
+  `a48e68b`，而 U-01 的补丁在 `1ab7905`、已经过 widi 的 PR #29 合入上游 `main`
+  （`origin/main` = `c2aea3d`）。已改指 `c2aea3d`。U-01 那条记录里"尚未推送"
+  的说明同步更新了。
+
+- **默认模型改成局域网 vllm。** `defaultProvider` / `defaultModel` 原本是
+  `kimi-coding/k3`，而 `kimi-coding` 这个 provider **在本 namespace 的
+  `agent/models.json` 里根本没有定义**——它来自 `packages/widi/preset/settings.json`
+  的预设，是被 namespace 初始化时继承下来的 WIDI 偏好，不是本项目的选择。
+  后果是每次启动都报 `model.default_unavailable`，且任何不显式指定模型的
+  spawn 都会落在一个无凭据的模型上（S8 的 Reviewer 静默产出空内容就是这么来的）。
+
+  改为 `vllm` / `qwen3.6-35b-a3b`，并把 `enabledModels` 里同样悬空的
+  `"kimi-coding/*"` 去掉。S0 当初不动默认值是对的（那时它属于用户偏好，
+  不该由执行 stage 的 agent 擅自改）；现在是用户明确要求改。
+
+  一个顺带的好处：`SCHOLAR_REVIEWER_MODEL` 从"实际必需"退回成"可选"——
+  不设它时 Reviewer 现在会落在一个真实可用的模型上。它作为 M 轴的旋钮仍然保留。
+
+- 验收（实际命令与输出）：
+  1. `ready` 帧的 `diagnostics` 从两条告警变成 `[]`。
+     `model.default_unavailable` 消失是本次改动的效果；
+     `profile.id_filename_mismatch`（U-02）消失则**不是**——它是路径分隔符问题，
+     只在 Windows 上出现，本次执行环境是 Linux。U-02 本身仍未修。
+  2. **不传 `--model`** 跑一次 `experiments/eval-runner/run.mjs`
+     （Service 在 127.0.0.1:8125，打真实 OpenAlex + arXiv）：
+     ```
+     runner v1 | rpc protocol v1
+     profile search | model vllm/qwen3.6-35b-a3b
+     widi c2aea3d40c9a | repo 76fb88d6322a (dirty)
+     extensions scholar-search | scholar-search v1
+     queries 1: 1 ok, 0 failed
+       q1: completed in 428814ms, 4672 chars
+     ```
+     `model` 那一行是从 RPC provenance 读出来的，没有命令行指定——
+     默认值端到端生效。`widi c2aea3d40c9a` 同时确认了 gitlink 改动已生效。
+  3. 回归：`npm run test:widis` → `150/150`；
+     `env -u all_proxy -u ALL_PROXY uv run pytest -q` → `111 passed`。
+
+- **补了 TUI 入口**（同一次维护）。原来只有 pasa 有显式名字（`widi:pasa`），
+  scholar 是 namespace 省略时的隐式默认（`widi`），不对称且不好发现。新增：
+
+  | 命令 | 根 profile | 说明 |
+  | --- | --- | --- |
+  | `widi:scholar` / `:dev` / `:rpc` | `main` | 与 `widi:pasa` 对称的显式名字 |
+  | `widi:search` / `:dev` | `search` | 直接进检索 agent |
+
+  `widi` / `widi:dev` / `widi:rpc` **保留不动**：S9 的 eval runner 按名字调用
+  `widi:rpc`（`rpc-client.mjs` 的 `script` 默认值），改名会破坏评测入口。
+
+  `--profile` 的透传本来就成立（`run-widi.mjs` 的 `appendDefaultOption`
+  只在缺省时补 `main`），所以 `widi:search` 不需要改脚本，只是一行 npm script。
+  实测：
+  ```
+  $ node scripts/run-widi.mjs --namespace scholar --mode rpc --profile search
+  diagnostics: []
+  profile: {"id":"search","label":"Scholar Search Agent"}
+  tools: ["list_providers","search_metadata","get_paper","provider_query",
+          "expand_citations","facet_probe","rank_candidates","search_fulltext","get_budget"]
+  ```
+  九个检索工具、无 `bash`/`write`/`edit`——与 S3 的验收一致。
+  `npm run check:workspace` → `Checked 4 files. No fixes applied.`
 
 
 
@@ -1102,17 +1292,14 @@ function basename(path: string): string {
 **submodule commit**：`1ab7905`
 **父仓库 gitlink**：`a48e68b` → `1ab7905`（随 S1 的 commit 一起更新）
 
-**尚未推送**：`packages/widi` 的 remote 是 `https://github.com/ArcadiaLin/widi.git`，
-本环境没有推送凭据。所以这个 commit **只存在于本地 submodule**，
-父仓库 gitlink 指向一个未推送的 commit——别人 clone 父仓库时
-`git submodule update` 会拉不到它。需要用户执行：
+**推送状态（2026-08-21 更新，本条原记为"尚未推送"）**：已推送并合并。
+`1ab7905` 经 widi 的 PR #29（`fix/windows-extension-id`）合入上游 `main`，
+submodule 的 `origin/main` 现在是 `c2aea3d`。
 
-```bash
-cd packages/widi && git push origin HEAD:<branch>
-```
-
-在那之前，`AGENTS.md` §2 要求的"推送到 ArcadiaLin/widi 再由父仓库更新 gitlink"
-只完成了后半截。这一点没有绕过的办法，如实记在这里。
+父仓库这边则出现过一次回退：`76fb88d` 把 gitlink 写回了 `a48e68b`，
+于是 gitlink 又指向了不含该补丁的版本。已在本次维护中改指 `c2aea3d`，
+`AGENTS.md` §2 要求的"推送到 ArcadiaLin/widi 再由父仓库更新 gitlink"
+至此两截都完成。
 
 **与 submodule 自己的 AGENTS.md 的冲突**：`packages/widi/AGENTS.md` 写
 "Never commit unless the user asks"。本路线图 §1.1 明确要求
