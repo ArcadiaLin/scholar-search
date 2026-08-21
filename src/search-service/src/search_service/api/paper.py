@@ -13,22 +13,17 @@ capability but cannot answer is a failure worth reporting, not a silent miss.
 
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from search_service.exceptions import SourceError
+from search_service.identifiers import parse_identifier
 from search_service.models import SearchResultItem
 from search_service.plugin_loader import PluginRegistry
 from search_service.providers.base import SearchProvider
 from search_service.schemas import Failure, PaperResponse, search_result_item_to_paper
 
 router = APIRouter(tags=["paper"])
-
-_ARXIV_ID_RE = re.compile(r"^(arxiv:)?\d{4}\.\d{4,5}(v\d+)?$", re.IGNORECASE)
-_DOI_RE = re.compile(r"^(doi:|https?://(dx\.)?doi\.org/)?10\.\d{4,9}/\S+$", re.IGNORECASE)
-_OPENALEX_RE = re.compile(r"^(https?://openalex\.org/)?W\d+$", re.IGNORECASE)
 
 
 def _preferred_providers(paper_id: str) -> list[str]:
@@ -37,12 +32,18 @@ def _preferred_providers(paper_id: str) -> list[str]:
     An ID shape is a hint for ordering, not a filter: a DOI can be resolved by
     OpenAlex, and an unrecognised shape simply means "no preference", so every
     capable provider is still tried.
+
+    The shapes themselves come from ``identifiers.parse_identifier``, not from
+    local regexes. Three endpoints each carrying their own idea of an identifier
+    is what let ``/search`` hand out ids that ``/expand/citations`` refused
+    (``docs/develop/backlog.md`` F-10).
     """
-    if _ARXIV_ID_RE.match(paper_id):
+    identifier = parse_identifier(paper_id)
+    if identifier is None:
+        return []
+    if identifier.kind == "arxiv":
         return ["arxiv", "openalex"]
-    if _OPENALEX_RE.match(paper_id) or _DOI_RE.match(paper_id):
-        return ["openalex", "arxiv"]
-    return []
+    return ["openalex", "arxiv"]
 
 
 def _capable_providers(registry: PluginRegistry, paper_id: str) -> list[SearchProvider]:

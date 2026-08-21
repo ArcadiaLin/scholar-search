@@ -175,10 +175,47 @@ function describeHttpFailure(error: ServiceRequestError): string {
 				"call list_providers and pick a source that advertises what you need."
 			);
 		case 502:
-			return `The provider failed behind the service: ${detail} Another source may still be able to answer.`;
+			return describeUpstreamFailure(error, detail);
 		default:
 			return `${error.message} ${detail}`;
 	}
+}
+
+/**
+ * Report a total upstream failure with its classification and a next move that is
+ * true.
+ *
+ * The previous wording appended "Another source may still be able to answer" to
+ * every 502. When the run had exactly one usable source that sentence sent the
+ * agent looking for a second one that does not exist, and it retried blindly for
+ * three minutes instead (`docs/develop/backlog.md` F-2). So the alternatives come
+ * from the service, which is the only side that knows the registry, and the
+ * classification is reported rather than summarised: "rate limited until
+ * tomorrow", "no results" and "the source is broken" are three different
+ * situations that used to arrive as one string.
+ */
+function describeUpstreamFailure(error: ServiceRequestError, detail: string): string {
+	const lines = [`The provider failed behind the service: ${detail}`];
+	if (error.failures.length > 0) {
+		lines.push(
+			`failures (${error.failures.length}):`,
+			...error.failures.map(
+				(failure) => `  - ${failure.source ?? "service"} [${failure.errorType}] ${failure.message}`,
+			),
+		);
+		if (error.failures.every((failure) => failure.errorType === "rate_limit")) {
+			lines.push(
+				"Every failure above is a quota limit, so retrying the same call cannot succeed until the quota resets.",
+			);
+		}
+	}
+	const alternatives = error.alternativeSources;
+	lines.push(
+		alternatives.length > 0
+			? `Sources not tried on this call that could serve it: ${alternatives.join(", ")}.`
+			: "No other configured source advertises what this call needs, so switching source is not an option here.",
+	);
+	return lines.join("\n");
 }
 
 /** One candidate as a citation line plus an abstract view, never the whole record. */
@@ -223,6 +260,18 @@ function formatSearchState(state: SearchStateRecord): string {
 		`sources queried: ${state.selectedSources.join(", ") || "none"}`,
 		`queries issued: ${state.issuedQueries.length} | candidates recalled: ${state.recalled} | returned: ${state.returned}`,
 	];
+	// A provider that rewrites the query says so here. Reporting only the wording
+	// the caller chose hid an arXiv rewrite that turned every multi-word query into
+	// an OR bag (`docs/develop/backlog.md` F-1).
+	const rewritten = state.issuedQueries.filter(
+		(issued) => issued.nativeQuery !== null && issued.nativeQuery !== issued.query,
+	);
+	if (rewritten.length > 0) {
+		lines.push(
+			"queries as actually sent to the provider:",
+			...rewritten.map((issued) => `  - ${issued.provider}: ${issued.nativeQuery}`),
+		);
+	}
 	const filterKeys = Object.keys(state.filters);
 	if (filterKeys.length > 0) lines.push(`filters applied: ${JSON.stringify(state.filters)}`);
 	if (state.failures.length > 0) {
@@ -712,7 +761,14 @@ const extension: ExtensionDefinition = {
 			parameters: {
 				type: "object",
 				properties: {
-					query: { type: "string", description: "The main query, as a natural-language statement of what is sought." },
+					query: {
+						type: "string",
+						description:
+							"The main query. Terms are combined with AND, so every term must appear: send the concepts that " +
+							"define the paper you want, not a sentence. Wrap a multi-word term in double quotes to keep it a " +
+							'phrase, e.g. \'"active learning" "semantic segmentation" superpixel\'. More terms means narrower; ' +
+							"send a second phrasing through `subqueries` rather than piling terms into one query.",
+					},
 					subqueries: {
 						type: "array",
 						items: { type: "string" },
@@ -1040,8 +1096,17 @@ const extension: ExtensionDefinition = {
 					);
 				}
 				if (result.papers.length === 0) {
+					// A rejected identifier and an empty graph are different facts, and
+					// the old unconditional wording reported the first as the second -
+					// which is what made the agent abandon citation expansion entirely
+					// (`docs/develop/backlog.md` F-10).
+					const badIds = result.failures.filter((failure) => failure.errorType === "bad_id");
 					lines.push(
-						"No papers reached. Either the seeds have no edges in this direction, or no source could serve them.",
+						badIds.length > 0
+							? `No papers reached, and ${badIds.length} seed(s) were rejected as identifiers rather than searched. ` +
+									"Fix those ids and call again; this is not a statement about the citation graph."
+							: "No papers reached. The seeds were accepted as identifiers, so either they have no edges in " +
+									"this direction or no enabled source holds them.",
 					);
 				} else {
 					const shown = result.papers.slice(0, MAX_LISTED_PAPERS);

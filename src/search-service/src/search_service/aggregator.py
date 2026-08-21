@@ -32,7 +32,29 @@ _SOURCE_PREFERENCE = ["openalex", "arxiv"]
 
 
 class AggregationError(Exception):
-    """Raised when aggregation cannot produce any results."""
+    """Raised when aggregation cannot produce any results.
+
+    Carries the classified failures and the sources that were *not* tried. When
+    every provider fails, the caller's next move depends entirely on which kind of
+    failure it was - a rate limit means wait, an empty result means rephrase, a
+    source fault means switch source - and the previous version raised a bare
+    string with the ``Failure`` list already built and then discarded
+    (``docs/develop/backlog.md`` F-2).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failures: list[Failure] | None = None,
+        alternative_sources: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failures = failures or []
+        #: Enabled providers that advertise keyword search and were not selected.
+        #: Empty means "there is no other source to try", which is the fact a
+        #: caller needs before it retries somewhere else.
+        self.alternative_sources = alternative_sources or []
 
 
 class Aggregator:
@@ -173,6 +195,11 @@ class Aggregator:
         selected = self._select_sources(sources)
         if not selected:
             raise AggregationError("No enabled providers support keyword search.")
+        by_name = {provider.name: provider for provider in selected}
+        selected_names = set(by_name)
+        alternatives = [
+            provider.name for provider in self._select_sources(None) if provider.name not in selected_names
+        ]
 
         # The main query first, then subqueries, deduplicated: an agent that
         # repeats the main query as a subquery must not pay for it twice.
@@ -204,7 +231,22 @@ class Aggregator:
                 timeout=timeout_ms / 1000.0,
             )
         except TimeoutError as exc:
-            raise AggregationError(f"Aggregation timed out after {timeout_ms}ms") from exc
+            raise AggregationError(
+                f"Aggregation timed out after {timeout_ms}ms",
+                failures=[
+                    Failure(
+                        stage="recall",
+                        source=None,
+                        error_type="timeout",
+                        message=(
+                            f"{len(tasks)} provider call(s) did not all finish within {timeout_ms}ms. "
+                            "Fewer subqueries or fewer sources per call is the lever; retrying the same "
+                            "call unchanged is not."
+                        ),
+                    )
+                ],
+                alternative_sources=alternatives,
+            ) from exc
 
         items_by_list: dict[str, list[SearchResultItem]] = {}
         issued_queries: list[IssuedQuery] = []
@@ -220,18 +262,32 @@ class Aggregator:
             # signal the fusion is there to read.
             items_by_list[f"{name}::{issued}"] = items
             recalled += len(items)
+            provider = by_name.get(name)
             issued_queries.append(
                 IssuedQuery(
                     provider=name,
                     mode="aggregated",
                     query=issued,
+                    native_query=(
+                        None
+                        if provider is None
+                        else provider.native_query_for(
+                            issued,
+                            end_date=end_date,
+                            native_params=(provider_params or {}).get(name),
+                        )
+                    ),
                     raw=(provider_params or {}).get(name),
                     latency_ms=latency_ms,
                 )
             )
 
         if not items_by_list:
-            raise AggregationError("All providers failed.")
+            raise AggregationError(
+                "All providers failed.",
+                failures=failures,
+                alternative_sources=alternatives,
+            )
 
         merged = self._deduplicate(items_by_list)
         ranked = self._rank(merged, top_k)

@@ -47,7 +47,17 @@ export interface TraceCall {
 }
 
 export interface TraceSearchState {
-	readonly issuedQueries: readonly { readonly provider: string; readonly query: string | null }[];
+	readonly issuedQueries: readonly {
+		readonly provider: string;
+		readonly query: string | null;
+		/**
+		 * What the provider was actually sent. Required in the trace, not optional:
+		 * a Reviewer reading only the agent's wording cannot see a rewrite, and the
+		 * one rewrite that mattered turned every query into an OR bag
+		 * (`docs/develop/backlog.md` F-1, B-2).
+		 */
+		readonly nativeQuery: string | null;
+	}[];
 	readonly selectedSources: readonly string[];
 	readonly filters: Readonly<Record<string, unknown>>;
 	readonly recalled: number;
@@ -161,13 +171,14 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 	if (!isRecord(details)) return undefined;
 	const state = details.searchState;
 	if (!isRecord(state)) return undefined;
-	const issued: { provider: string; query: string | null }[] = [];
+	const issued: { provider: string; query: string | null; nativeQuery: string | null }[] = [];
 	if (Array.isArray(state.issuedQueries)) {
 		for (const entry of state.issuedQueries) {
 			if (!isRecord(entry)) continue;
 			issued.push({
 				provider: typeof entry.provider === "string" ? entry.provider : "unknown",
 				query: typeof entry.query === "string" ? entry.query : null,
+				nativeQuery: typeof entry.nativeQuery === "string" ? entry.nativeQuery : null,
 			});
 		}
 	}

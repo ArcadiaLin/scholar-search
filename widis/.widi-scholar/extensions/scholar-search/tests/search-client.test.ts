@@ -199,6 +199,61 @@ describe("searchMetadata response", () => {
 		assert.deepEqual(result.searchState.failures, []);
 	});
 
+	it("records the query as actually sent, not only as the caller wrote it", async () => {
+		// A provider rewrite that the trajectory cannot see is a rewrite nobody can
+		// debug: arXiv turned every multi-word query into an OR bag and the trace
+		// showed the agent's own wording throughout (`docs/develop/backlog.md` F-1).
+		const scope = arrange(() => ({ status: 200, body: searchFixture }));
+		const result = await clientFor(scope).searchMetadata({ query: "q" });
+
+		const arxiv = result.searchState.issuedQueries.find((issued) => issued.provider === "arxiv");
+		assert.equal(arxiv?.query, "transformer attention");
+		assert.equal(arxiv?.nativeQuery, "all:transformer AND all:attention");
+	});
+
+	it("reports a provider that sends the query unchanged as a null native query", async () => {
+		const payload = JSON.parse(searchFixture) as Record<string, unknown>;
+		const state = payload.search_state as Record<string, unknown>;
+		state.issued_queries = [{ provider: "arxiv", mode: "aggregated", query: "q" }];
+		const scope = arrange(() => ({ status: 200, body: JSON.stringify(payload) }));
+
+		const result = await clientFor(scope).searchMetadata({ query: "q" });
+		assert.equal(result.searchState.issuedQueries[0]?.nativeQuery, null);
+	});
+
+	it("carries the classified failures out of a total upstream failure", async () => {
+		// 502 is exactly when the classification matters: a quota limit, an empty
+		// result and a broken source need three different next moves, and they used
+		// to arrive as one sentence (`docs/develop/backlog.md` F-2).
+		const scope = arrange(() => ({
+			status: 502,
+			body: JSON.stringify({
+				detail: "All providers failed.",
+				failures: [{ stage: "recall", source: "openalex", error_type: "rate_limit", message: "quota gone" }],
+				alternative_sources: ["arxiv"],
+			}),
+		}));
+
+		await assert.rejects(clientFor(scope, { retries: 0 }).searchMetadata({ query: "q" }), (error: unknown) => {
+			assert.ok(error instanceof ServiceRequestError);
+			assert.equal(error.failures.length, 1);
+			assert.equal(error.failures[0]?.errorType, "rate_limit");
+			assert.deepEqual([...error.alternativeSources], ["arxiv"]);
+			return true;
+		});
+	});
+
+	it("reports no alternative sources when the service names none", async () => {
+		const scope = arrange(() => ({ status: 502, body: JSON.stringify({ detail: "All providers failed." }) }));
+
+		await assert.rejects(clientFor(scope, { retries: 0 }).searchMetadata({ query: "q" }), (error: unknown) => {
+			assert.ok(error instanceof ServiceRequestError);
+			assert.deepEqual(error.failures, []);
+			assert.deepEqual([...error.alternativeSources], []);
+			return true;
+		});
+	});
+
 	it("reports failures that happened even though the search succeeded", async () => {
 		const payload = JSON.parse(searchFixture) as Record<string, unknown>;
 		const state = payload.search_state as Record<string, unknown>;

@@ -223,6 +223,7 @@ RPC 只承载通用运行时能力；查询 schema、论文结果、关系图和
 | `develop/plan.md` | 我该做什么？按什么顺序？做完怎么验？ |
 | `develop/backlog.md` | 现在什么是坏的？（`F-n` 缺陷 + `G-n` 验收缺口） |
 | `develop/decisions.md` | 这个选择为什么是这样定的？（`D-n`） |
+| `develop/worklog.md` | 实施到哪了？实施中做过哪些计划外的小选择？ |
 | `develop/mapping.md` | 某个设计概念的代码在哪？ |
 | `develop/history.md` | S0–S9 怎么走过来的？环境有什么坑？（`U-n`/`SV-n`/`E-n`） |
 

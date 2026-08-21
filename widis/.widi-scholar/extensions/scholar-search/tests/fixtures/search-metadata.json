@@ -83,6 +83,7 @@
         "provider": "arxiv",
         "mode": "aggregated",
         "query": "transformer attention",
+        "native_query": "all:transformer AND all:attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -91,6 +92,7 @@
         "provider": "arxiv",
         "mode": "aggregated",
         "query": "self-attention",
+        "native_query": "all:self-attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -99,6 +101,7 @@
         "provider": "openalex",
         "mode": "aggregated",
         "query": "transformer attention",
+        "native_query": "search=transformer attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -107,6 +110,7 @@
         "provider": "openalex",
         "mode": "aggregated",
         "query": "self-attention",
+        "native_query": "search=self-attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0

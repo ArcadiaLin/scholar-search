@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from search_service.exceptions import SourceError
+from search_service.identifiers import ACCEPTED_ID_FORMS, parse_identifier
 from search_service.plugin_loader import PluginRegistry
 from search_service.providers.base import SearchProvider
 from search_service.schemas import ExpandRequest, ExpandResponse, Failure, Paper, search_result_item_to_paper
@@ -78,20 +79,53 @@ async def expand_citations(payload: ExpandRequest, request: Request) -> ExpandRe
     max_total = int(limits["max_total_candidates"])
     concurrency = max(1, int(limits["max_concurrency"]))
 
-    seeds = [seed.strip() for seed in payload.seed_ids if seed.strip()]
-    seeds_clamped = len(seeds) > max_seeds
-    frontier = seeds[:max_seeds]
-    if not frontier:
+    given = [seed.strip() for seed in payload.seed_ids if seed.strip()]
+    if not given:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"detail": "seed_ids must contain at least one non-empty identifier."},
         )
 
+    # Seeds are parsed before the walk starts, and a seed that is not an identifier
+    # is reported as a bad input rather than walked and blamed on the graph. The
+    # previous behaviour handed the string to the provider, which answered "not a
+    # valid OpenAlex ID" for the very ``paper_id`` shape ``/search`` hands out -
+    # and the fallback text called that a direction with no edges
+    # (``docs/develop/backlog.md`` F-10).
+    failures: list[Failure] = []
+    seeds: list[str] = []
+    for seed in given:
+        if parse_identifier(seed) is None:
+            failures.append(
+                Failure(
+                    stage="expand",
+                    source=None,
+                    error_type="bad_id",
+                    message=f"seed {seed!r} is not a recognised identifier. Accepted forms: {ACCEPTED_ID_FORMS}.",
+                )
+            )
+            continue
+        seeds.append(seed)
+
+    if not seeds:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "detail": (
+                    f"None of the {len(given)} seed_ids is a recognised identifier. Accepted forms: "
+                    f"{ACCEPTED_ID_FORMS}."
+                ),
+                "failures": [failure.model_dump() for failure in failures],
+            },
+        )
+
+    seeds_clamped = len(seeds) > max_seeds
+    frontier = seeds[:max_seeds]
+
     # Concurrency is capped by a semaphore rather than by batching, so one slow
     # provider cannot serialise the whole walk while still never exceeding the
     # configured parallelism.
     gate = asyncio.Semaphore(concurrency)
-    failures: list[Failure] = []
     edges: list[CitationEdge] = []
     reached: dict[str, Paper] = {}
     visited: set[str] = set(frontier)

@@ -51,6 +51,24 @@ class SearchProvider(SourcePlugin):
         """
         raise NotImplementedError(f"{self.name} does not implement search()")
 
+    def native_query_for(
+        self,
+        query: str,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> str | None:
+        """The provider-native query string a ``search()`` with these arguments sends.
+
+        Pure, and derived from the same builder ``search()`` uses. It exists so
+        ``SearchState.issued_queries`` can record what left the process rather
+        than what the caller asked for: those two were not the same string, and a
+        trajectory that reports the caller's wording cannot show a rewrite bug
+        (``docs/develop/backlog.md`` F-1). ``None`` means this provider sends the
+        query unrewritten.
+        """
+        return None
+
     async def search_native(self, raw_payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a provider-native query and return the raw response.
 

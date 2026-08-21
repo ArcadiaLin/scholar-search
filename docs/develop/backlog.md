@@ -92,8 +92,8 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 
 | # | 一句话 | 状态 | 阻塞什么 |
 | --- | --- | --- | --- |
-| **F-1** | arXiv 查询退化成 OR，召回层从根上失效 | 未修 | **一切**。S10 的前置 |
-| **F-2** | 全部 provider 失败时，失败原因被丢弃 | 未修 | S10 的前置；R5 检测器 |
+| **F-1** | arXiv 查询退化成 OR，召回层从根上失效 | **已修** | **一切**。S10 的前置 |
+| **F-2** | 全部 provider 失败时，失败原因被丢弃 | **已修** | S10 的前置；R5 检测器 |
 | F-3 | OpenAlex 改信用计费，`rate_limit_rps` 对它无效 | 部分修（见 F-8） | 预算维度 |
 | F-4 | `call_ledger` 只数次数，不算成本、不对配额 | 未修 | "预算接近上限" checkpoint；R7 检测器 |
 | F-5 | `end_date` 从未被使用，而评测协议依赖它 | 未修 | 评测的时间窗正确性 |
@@ -101,14 +101,20 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 | F-7 | 四条较小但确凿的问题（a–d） | 未修 | — |
 | F-8 | `.env` 按进程 cwd 解析，凭据从未被读到 | **已修** | — |
 | F-9 | LLM provider 的凭据走 `os.environ`，同样读不到 `.env` | 未修（潜伏） | 换 provider 时会咬人 |
-| **F-10** | `expand_citations` 不接受其他工具产出的 id | 未修 | **S11 的 R4 检测器**；E 轴 |
+| **F-10** | `expand_citations` 不接受其他工具产出的 id | **已修** | **S11 的 R4 检测器**；E 轴 |
 | F-11 | OpenAlex 的 ML 预印本引文图稀疏，backward 扩展不可用 | **不可修**（数据现实） | E 轴的默认方向 |
 
 加粗的三条是 S10 的前置修复，见 `plan.md` §2。
 
 ---
 
-## F-1 — arXiv 查询退化成 OR，召回层从根上失效
+## F-1 — arXiv 查询退化成 OR，召回层从根上失效（已修）
+
+**修复**（2026-08-21）：`plugins/arxiv.py` 的 `build_search_query()` 按 AND 连接词项，
+短语保留、字段前缀与裸布尔算子透出；`SearchState.issued_queries[].native_query`
+记录实际发出的串；回归断言在 `tests/test_arxiv_query.py`，其中对 arXiv 回显
+`<title>` 不含 ` OR ` 的那条标 `network`（默认不跑，`pytest -m network` 跑）。
+0/4 → 4/4 的复跑记录在 `worklog.md` §4。原文保留在下。
 
 **现象**：会话中每一次 arXiv 检索返回的都是"含有若干常见词"的杂烩。
 最刺眼的一次是精确标题检索：
@@ -163,7 +169,13 @@ MetaBox+ 和 ViewAL 在会话末尾能被标题查询命中，是因为标题里
 
 ---
 
-## F-2 — 全部 provider 失败时，失败原因被丢弃
+## F-2 — 全部 provider 失败时，失败原因被丢弃（已修）
+
+**修复**（2026-08-21）：`AggregationError` 带上 `failures` 与 `alternative_sources`
+（服务端算出来的"还没试过且具备该能力的源"），`POST /search` 的 502 体原样透出这两项；
+extension 侧 `describeUpstreamFailure()` 取代那句无条件文案，全部失败都是限流时
+另加一句"重试同一个调用不可能成功"。第 2 点（`Retry-After` 上传）属于 F-3，未做。
+原文保留在下。
 
 **现象**：同一类失败，agent 看到的信息量完全不同。
 
@@ -490,7 +502,15 @@ Service 侧要用 LLM 的地方不止判别器——还有 L3a 的 cross-encoder
 
 ---
 
-## F-10 — `expand_citations` 不接受其他工具产出的 id（未修）
+## F-10 — `expand_citations` 不接受其他工具产出的 id（已修）
+
+**修复**（2026-08-21）：新增 `search_service/identifiers.py` 作为唯一的 id 解析处，
+`api/paper.py` 的三条本地正则改成调它，OpenAlex 的 `works/` 寻址一律经
+`openalex_address()`（DOI → `doi:<doi>`，arXiv id → `doi:10.48550/arXiv.<id>`，
+两种形式都实测是 $0 的单篇查找）；`filter=cites:` 前先把种子解析成 `W` id。
+无法解析的种子记成 `bad_id` 并说明接受哪些形式，全部种子都坏时返回 400 而不是空图。
+契约测试在 `tests/test_identifier_contract.py`，包括"把 `/search` 给出的 id
+直接喂给 `/expand/citations`"这一条。原文保留在下。
 
 **现象**：2026-08-21 的 `search-k9u1` 会话里，两次 `expand_citations` 都因为
 种子 id 格式失败，agent 随后**放弃了引文扩展这条路**。

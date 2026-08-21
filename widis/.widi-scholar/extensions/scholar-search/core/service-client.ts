@@ -79,6 +79,26 @@ export class ServiceRequestError extends Error {
 		const detail = this.bodyJson?.detail;
 		return typeof detail === "string" ? detail : undefined;
 	}
+
+	/**
+	 * The classified per-source failures behind this error, when the service sent
+	 * them. Total failure is when the caller most needs the classification - a
+	 * rate limit, an empty result and a broken source lead to three different next
+	 * moves - so an error that carries them must not be flattened to its `detail`.
+	 */
+	get failures(): readonly FailureRecord[] {
+		return parseFailures(this.bodyJson?.failures);
+	}
+
+	/**
+	 * Sources the service says it did *not* try and that could serve this request.
+	 * Empty means switching source is not an option, which is the half the
+	 * previous unconditional "another source may still be able to answer" got
+	 * wrong (`docs/develop/backlog.md` F-2).
+	 */
+	get alternativeSources(): readonly string[] {
+		return stringList(this.bodyJson?.alternative_sources);
+	}
 }
 
 /** Cost and quota for one provider endpoint. */
@@ -147,6 +167,13 @@ export interface IssuedQueryRecord {
 	readonly provider: string;
 	readonly mode: string | null;
 	readonly query: string | null;
+	/**
+	 * What the provider was actually sent, when it rewrites the query. `null`
+	 * means it sends the query unchanged. Reported separately from `query` because
+	 * they were not the same string and nothing showed the difference: arXiv turned
+	 * every multi-word query into an OR bag for months (`docs/develop/backlog.md` F-1).
+	 */
+	readonly nativeQuery: string | null;
 	readonly latencyMs: number | null;
 }
 
@@ -724,6 +751,7 @@ function parseSearchState(value: unknown): SearchStateRecord {
 				provider: typeof entry.provider === "string" ? entry.provider : "unknown",
 				mode: nullableString(entry.mode),
 				query: nullableString(entry.query),
+				nativeQuery: nullableString(entry.native_query),
 				latencyMs: nullableNumber(entry.latency_ms),
 			});
 		}

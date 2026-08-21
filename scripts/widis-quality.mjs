@@ -97,7 +97,15 @@ if (mode === "check") {
 }
 
 function run(executable, args) {
-	const result = spawnSync(executable, args, { cwd: repositoryRoot, env: process.env, stdio: "inherit" });
+	const result = spawnSync(executable, args, {
+		cwd: repositoryRoot,
+		env: process.env,
+		stdio: "inherit",
+		// npm's Windows shims are `.cmd` batch files, and since Node 20 `spawnSync`
+		// refuses to execute one without a shell (EINVAL). Without this the whole
+		// check step is unrunnable on Windows.
+		shell: process.platform === "win32",
+	});
 	if (result.error) {
 		process.stderr.write(`Failed to run ${executable}: ${result.error.message}\n`);
 		process.exit(1);

@@ -144,6 +144,30 @@ describe("what the trace does record", () => {
 		assert.deepEqual(snapshot.calls[0]?.searchState?.filters.subqueries, ["sub"]);
 	});
 
+	it("keeps the query as actually issued alongside the query the agent wrote", () => {
+		// A Reviewer that reads only the agent's wording cannot see a provider
+		// rewrite, and the rewrite that mattered turned every query into an OR bag
+		// (`docs/develop/backlog.md` F-1, and B-2 for what that cost the review).
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({
+				issuedQueries: [
+					{ provider: "arxiv", query: "active learning superpixel", nativeQuery: "all:active AND all:superpixel" },
+					{ provider: "openalex", query: "active learning superpixel" },
+				],
+			}),
+			isError: false,
+		});
+
+		const issued = trace.snapshot().calls[0]?.searchState?.issuedQueries;
+		assert.equal(issued?.[0]?.nativeQuery, "all:active AND all:superpixel");
+		assert.equal(issued?.[1]?.nativeQuery, null, "a provider that does not rewrite reports null, not its own guess");
+	});
+
 	it("keeps the service's classified failures even when the call succeeded", () => {
 		// "20 results" and "20 results, and arXiv timed out" are different facts
 		// about coverage, and coverage gaps are the Reviewer's main subject.

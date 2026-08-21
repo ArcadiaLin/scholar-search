@@ -37,9 +37,17 @@ async def search(http_request: Request, request: SearchRequest) -> SearchRespons
             subqueries=request.subqueries,
         )
     except AggregationError as exc:
+        # The classified failures travel with the error. "All providers failed" and
+        # "all providers were rate-limited until tomorrow" call for different next
+        # moves, and total failure is precisely when the caller most needs to know
+        # which one it is (``docs/develop/backlog.md`` F-2).
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"detail": str(exc)},
+            content={
+                "detail": str(exc),
+                "failures": [failure.model_dump() for failure in exc.failures],
+                "alternative_sources": exc.alternative_sources,
+            },
         )
 
     return SearchResponse(

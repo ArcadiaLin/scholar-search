@@ -12,7 +12,14 @@ class IssuedQuery(BaseModel):
 
     provider: str = Field(description="Provider name.")
     mode: Literal["aggregated", "passthrough"] = Field(description="Service mode used for this query.")
-    query: str | None = Field(default=None, description="Normalized query string.")
+    query: str | None = Field(default=None, description="Normalized query string, as the caller wrote it.")
+    native_query: str | None = Field(
+        default=None,
+        description=(
+            "The provider-native query string actually sent, when the provider rewrites the "
+            "normalized one. A rewrite the trajectory cannot see is a rewrite nobody can debug."
+        ),
+    )
     raw: dict[str, Any] | None = Field(default=None, description="Provider-native payload.")
     cost_usd: float | None = Field(default=None, description="Estimated cost of this call.")
     latency_ms: int | None = Field(default=None, description="Observed latency in milliseconds.")
@@ -30,8 +37,8 @@ class Failure(BaseModel):
 
     stage: str | None = Field(default=None, description="Pipeline stage where the failure occurred.")
     source: str | None = Field(default=None, description="Provider name, if applicable.")
-    error_type: Literal["timeout", "rate_limit", "auth", "http", "parse", "disabled", "unknown"] = Field(
-        description="Failure category.")
+    error_type: Literal["timeout", "rate_limit", "auth", "http", "parse", "disabled", "bad_id", "unknown"] = Field(
+        description="Failure category. `bad_id` is a caller-fixable input, not a gap in the data.")
     message: str = Field(description="Human-readable error message.")
 
 
