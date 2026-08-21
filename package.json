@@ -23,6 +23,11 @@
 		"widi": "node scripts/run-widi.mjs --namespace scholar",
 		"widi:dev": "node scripts/run-widi.mjs --namespace scholar --dev",
 		"widi:rpc": "node scripts/run-widi.mjs --namespace scholar --mode rpc",
+		"widi:scholar": "node scripts/run-widi.mjs --namespace scholar",
+		"widi:scholar:dev": "node scripts/run-widi.mjs --namespace scholar --dev",
+		"widi:scholar:rpc": "node scripts/run-widi.mjs --namespace scholar --mode rpc",
+		"widi:search": "node scripts/run-widi.mjs --namespace scholar --profile search",
+		"widi:search:dev": "node scripts/run-widi.mjs --namespace scholar --dev --profile search",
 		"widi:pasa": "node scripts/run-widi.mjs --namespace pasa",
 		"widi:pasa:dev": "node scripts/run-widi.mjs --namespace pasa --dev",
 		"widi:pasa:rpc": "node scripts/run-widi.mjs --namespace pasa --mode rpc"
