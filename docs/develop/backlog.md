@@ -17,8 +17,13 @@
 每条的格式统一：现象 → 证据 → 根因 → 后果 → 补上它需要什么。
 
 **证据来源**：`widis/.widi-scholar/runs/--root-projs-scholar-search--/`
-下的三次真实会话（2026-08-21，`npm run widi:scholar`），
-其中 F-1..F-7 出自首次会话 `20260821T072357Z_search-d9w6`。
+下的真实会话（`npm run widi:scholar`），分两批：
+
+| 批次 | 会话 | 出自这批的条目 |
+| --- | --- | --- |
+| 2026-08-21 | 三次，其中 `20260821T072357Z_search-d9w6` 是首次 | F-1..F-13、B-1..B-5 |
+| 2026-08-22 | 两次，同一条查询、两个模型：`20260822T085721Z_search-jokj`（vllm/qwen3.6-35b-a3b）与 `20260822T090309Z_search-ez9i`（kimi-coding/k3），各带一个 sidecar Reviewer 子会话 | §1.5、F-14..F-20、B-6..B-10 |
+
 `runs/` 在 `.gitignore` 里，那些记录不会进版本库，所以**本文把关键证据原样内嵌**，
 不依赖那些文件还在。
 
@@ -86,6 +91,58 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 
 ---
 
+## 1.5 第二次基线测量：两个模型，F1 0.27 与 0.20
+
+2026-08-22 的两次会话又是一次**有对照答案的评测**，而且比 §1 那次更严格：
+用户先让 agent 回答
+`What papers included research on self-supervised methods in monocular depth estimation?`，
+等它给完答案，再把 13 篇标准答案逐字贴进 TUI 问"你有找到这些文章吗"。
+
+```
+Learning to Fuse Monocular and Multi-view Cues for Multi-frame Depth Estimation in Dynamic Scenes
+Digging Into Self-Supervised Monocular Depth Estimation                          ← 两轮都命中
+Disentangling Object Motion and Occlusion for Unsupervised Multi-frame Monocular Depth
+Kick Back & Relax: Learning to Reconstruct the World by Watching SlowTV
+Adaptive Fusion of Single-View and Multi-View Depth for Autonomous Driving
+Self-Supervised Monocular Depth Estimation with Internal Feature Fusion          ← run2 检索到、未提交
+MonoViT: Self-Supervised Monocular Depth Estimation with a Vision Transformer    ← run2 命中
+HR-Depth: High Resolution Self-Supervised Monocular Depth Estimation             ← 两轮都命中
+Attention Concatenation Volume for Accurate and Efficient Stereo Matching
+Semantically-Guided Representation Learning for Self-Supervised Monocular Depth  ← 两轮都命中
+Learning Depth via Leveraging Semantics: ... Implicit and Explicit Semantic Guidance
+SC-DepthV3: Robust Self-supervised Monocular Depth Estimation for Dynamic Scenes
+R3D3: Dense 3D Reconstruction of Dynamic Scenes from Multiple Cameras
+```
+
+同一条查询、同一 `search` profile、同一套工具，只有模型不同：
+
+| | run1 `search-jokj` | run2 `search-ez9i` |
+| --- | --- | --- |
+| 模型 | vllm/qwen3.6-35b-a3b | kimi-coding/k3 |
+| 时长 / 工具调用 | 4分52秒 / 16 | 22 分钟 / **42**（软上限 40） |
+| 主 agent token（in/out） | 91186 / 5331 | 61647 / 23696 |
+| 主 agent 成本 | $0（本地 vllm） | **$0.8069** |
+| Reviewer 输入 token | 172422 | **945971**，`cacheRead` 全 0 |
+| 答案池 | 9 篇 | 28 篇 |
+| 命中 gold | 3/13 | 4/13 |
+| Recall / Precision / F1 | 0.231 / 0.333 / **0.273** | 0.308 / **0.143** / **0.195** |
+
+**结论要放在最前面：run2 用 4.5 倍的调用、4 倍的时间和真金白银的 $0.81，
+把答案池扩到 3 倍大，F1 反而更低。** 扩张出来的 19 篇里只有 1 篇是 gold，
+其余全是 precision 损失。官方权重 F1 占 70%、运行效率占 20%，两项同时被这次扩张打低。
+
+这个数字与 §1 那个 0/4 → 4/4 是一对，且**失分点已经移位**：
+
+- §1 的失分在 **L0 召回层**（F-1，查询拼错，正确答案根本没进候选集）；
+- 这次两轮的候选集都不缺东西——run2 召回 1400 条候选、返回 233 条，
+  gold 里的 `Internal Feature Fusion` 就排在某次 OpenAlex 结果第 3 位。
+  **失分在策略层与证据层**：看不见（F-15）、判别层被降级掉（F-19）、
+  提交了没检索过的 id（F-14）、Reviewer 从中途起完全失灵（F-17）。
+
+所以 F-1 之后的下一个瓶颈不是"再修一个召回 bug"，而是 §2 表里 F-14..F-20 这批。
+
+---
+
 ## 2. 检索缺陷一览
 
 条目按发现顺序编号，不按严重程度。下表用于翻找；每条的正文在后面。
@@ -105,10 +162,20 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 | F-11 | OpenAlex 的 ML 预印本引文图稀疏，backward 扩展不可用 | **不可修**（数据现实） | E 轴的默认方向 |
 | **F-12** | 查询里的 `?` 让 OpenAlex 直接 400 | 未修 | 任何绕过 agent 的批量评测 |
 | **F-13** | AND 连接对整句自然语言查询过严（实测 0 条） | 未修 | 同上；J 轴消融已改用夹具查询 |
+| **F-14** | 答案池接受本会话从未检索到的 id，证据链有洞 | 未修 | **答案的可信性**；G-2 的替代物失效 |
+| **F-15** | 工具输出在 agent 上下文里被截断，召回的大部分它看不见 | 未修 | 排序栈（B 轴）、E 轴、`rank_candidates` |
+| **F-16** | `facet_probe` 的合法 `group_by` 无从得知，两轮都 400 | 未修 | 诊断通道整条不可用 |
+| **F-17** | Reviewer 建议按 `(action, target)` 去重，`novelty_key` 未生效 | 未修 | **S11 的 R1..R7 全部**；M 轴 |
+| **F-18** | Reviewer 越出证据白名单，且 `action` 与建议内容不符 | 未修 | 建议的可信性；F-14 的上游 |
+| **F-19** | 超时后 `judge_level` 一路降级到 `off`，L3b 全程未参与 | 未修 | **J 轴在真实 episode 上的一切结论** |
+| **F-20** | `expand_citations` 的 fanout 按 provider 原序截断，不做相关性选择 | 未修 | E 轴 |
 
 F-1 / F-2 / F-10 是 S10 的前置修复，已修，见 `plan.md` §2 与 `worklog.md` §4。
 F-12 / F-13 是 S12 期间实测到的两条新缺陷：它们只在**绕过 agent** 的路径上发作
 （agent 送的是词项式查询），但那条路径正是批量评测走的，所以它们阻塞的是评测而不是产品。
+F-14..F-20 出自 §1.5 的两次会话，方向相反：它们**只在 agent 路径上发作**，
+批量评测（绕过 agent、直接调 Service）一条都碰不到——这正是它们此前没被任何
+stage 验收和任何消融发现的原因。
 
 ---
 
@@ -653,12 +720,382 @@ OpenAlex client error 400: {"error":"Invalid query parameters error.",
 3. 若要真正做引文扩展，需要引入有 ML 预印本引文图的源
    （Semantic Scholar / OpenCitations），这是新 provider，不在当前范围。
 
+## F-14 — 答案池接受本会话从未检索到的 id（未修）
+
+**现象**：`update_answer_pool` 的 `paper_id` 只要能被解析成一个合法标识符就被收下，
+不检查它是否在本会话的任何一次工具返回里出现过。于是 agent 可以把
+"记得有这么一篇"直接写进最终答案。
+
+**证据**（run2 `search-ez9i`，09:07:06 的第一次提交，五篇里有两篇是这样进去的）：
+
+```json
+{"paper_id": "https://doi.org/10.1109/3dv57658.2022.00077",
+ "why": "Representative architecture line: adapts vision Transformers to ..."},
+{"paper_id": "2207.11984",
+ "why": "Resolution-adaptive self-supervised monocular depth estimation, ..."}
+```
+
+- `10.1109/3dv57658.2022.00077`（MonoViT）：本会话所有工具返回里，MonoViT 只以
+  arXiv id `2208.03543` 出现过（09:05:37 那次 arXiv 搜索的第 4 条）。这个 DOI
+  **一次都没有出现过**，是模型凭记忆写的；
+- `2207.11984`（RA-Depth）：只出现在 **Reviewer 建议的 `evidence_ids` 里**，
+  agent 自己从未见过这条记录的标题以外的任何字段，却给它写了一句
+  `why`（"targeting performance loss when training and testing resolutions differ"）——
+  那是从标题反推的，不是从摘要读到的。
+
+两条都碰巧是对的（服务端解析后回显的标题正确），这恰恰是最坏的情况：
+**它不会以失败的形式暴露**。
+
+**根因**：`core/answer-pool.ts` 的 `add` 只做 id 归一（D-13 / `canonical_key`）与
+去重，没有"这个 id 必须来自本会话的检索结果"这一层。会话里确实存在这样一份集合——
+`PublicSearchTrace` 的 `evidenceIds` 就是它，Reviewer 的 gate 已经在用它做
+`unknown_evidence` 校验（`core/review.ts:197`）。**同一份证据集合，
+审 Reviewer 的建议时用了，审 Main 自己的提交时没用。**
+
+**后果**：
+
+- 答案池是评测唯一读取的对象（`plan.md` §3.4），也是 G-2 未落地期间
+  Evidence Store 的替代物（§3.6）。它接受未经检索的 id，等于替代物这一半失效：
+  Recall@k 里有多少是"检索到的"、多少是"模型背出来的"，现在无法区分；
+- 引用编造这件事在 B-3 里已经出现过一次（编造服务地址与日期），当时的缓解论证是
+  "$\bar{\tau}_t$ 看得到工具调用，看不到的只是面向用户的散文"。F-14 把编造搬进了
+  工具调用里，那条论证不再成立；
+- 它还与 F-18 串成一条链：Reviewer 在自由文本里提一个 id → agent 照抄进池子 →
+  没人再校验。
+
+**补上它需要**：
+
+1. `add` 增加一道校验：`paper_id` 归一后必须命中本会话 `evidenceIds`，
+   否则 `throw`（工具失败必须 throw，`SKILL.md` §6），错误文案要指出
+   "先用 `get_paper` 把它取回来，再提交"——这是一条 agent 可执行的修复路径；
+2. 校验必须在**归一之后**比对，否则 `2208.03543` 与其注册 DOI 会被判成两篇
+   （D-13 已经把归一做好了，直接复用）；
+3. 回归断言：一个没出现在 trace 里的 id 被 `add` 拒绝，且拒绝理由里给出补救动作。
+
+**注意这条不能改成"静默忽略"**：静默丢弃会让 agent 以为提交成功了
+（`worklog.md` §2 已经为池子上限那条定过同样的调子）。
+
+## F-15 — 工具输出在 agent 上下文里被截断，召回的大部分它看不见（未修）
+
+**现象**：工具返回的条目数与 agent 实际能读到的条目数差一个数量级。
+agent 自己在推理里点破了这件事：
+
+```
+[45] 09:12:19  Forward output 25 but truncated after 9. Need perhaps rank these 25
+               against query? We have candidate records truncated inaccessible?
+               Tool output maybe in context truncated but system knows? We can only
+               reference visible IDs.
+```
+
+**证据**（run2，同一 episode 的三处）：
+
+| 调用 | 工具自报 | agent 可见 |
+| --- | --- | --- |
+| `search_metadata`（OpenAlex，`top_k: 50`） | `50 result(s)` / `candidates recalled: 500` | 前 3–4 条 |
+| `expand_citations`（forward，`fanout: 25`） | `25 paper(s) reached over 25 edge(s)` | 前 9 条 |
+| `update_answer_pool`（第四次） | `Answer pool: 28 paper(s) committed` | 前 19 条 |
+
+整个 episode 的总账：**候选召回 1400 条、返回 233 条**，
+而 agent 能引用的大概不超过 40 条。
+
+**根因**：工具自己限制输出大小（`SKILL.md` §6 要求如此，本身没错），
+但截断的实现是这一行（`index.ts:114`，上限 `MAX_OUTPUT_CHARS = 6_000`）：
+
+```ts
+function truncate(text: string, maxChars: number): string {
+	return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
+}
+```
+
+**按字符、从尾部、无声。** 没有"还有 N 条未显示"的提示，没有翻页或按 id 取回的
+第二跳，也没有把被砍掉的部分留在一个 agent 能寻址的地方——那个 `...`
+是 agent 能得到的全部信号，而它与"这条摘要写完了"长得一模一样。
+`../prototype.md` 设计里"召回—合并—排序—提交"这条链，
+在实现上被截在了"合并"与"排序"之间。
+
+**与进行中的答案池 TUI 面板的边界**（工作区里 `tui/answer-pool-panel.ts`，
+截至 2026-08-22 未提交）：那个面板把**池子**完整渲染给**人**看，
+明确写了"每篇都整条渲染、`why` 从不截断"。它解决的是人读池子的问题，
+**不解决这一条**——工具返回给 agent 的那份文本仍然走上面那个 `truncate`，
+搜索与扩展的结果根本不经过面板。两者不要互相当作对方的修复。
+
+**后果**（三条，一条比一条重）：
+
+1. **配额与延时花在了 agent 看不见的结果上。** OpenAlex 的 `works_search`
+   是 $0.001/call 的付费档（F-3），召回 500 条只读到 4 条，成本模型算的是 500 条那份；
+2. **`rank_candidates` 被这条缺陷废掉。** 因为真实记录不在上下文里，agent 只能
+   自己手写候选记录去调它，实测它填的是自造的一句话摘要，返回的排名里
+   `authors unknown / citations unknown / sources: unknown`——
+   一个本该在真实元数据上做的重排，退化成在 agent 复述上做的重排。
+   F-7d 记的是"`rank_candidates` 零调用"，这次它被调了一次，
+   **结果比不调更坏**：它产出了一个看起来像排名的东西；
+3. **它是 F-14 的动机来源。** 看不见记录，就只能凭记忆写 id。
+
+**补上它需要**：
+
+1. 截断处必须显式说明"共 N 条，此处显示前 M 条"，并给出取回其余部分的办法
+   （分页参数、或 `get_paper` 可用的 id 清单——**只给 id 清单也够**，
+   id 是 agent 唯一必须精确的东西）；
+2. `rank_candidates` 的入参改成接受 id 列表而不是候选记录副本，
+   由 Service 端按 id 取回真实记录再排——顺带消掉"agent 复述"这一层；
+3. 回归断言：一次 `top_k: 50` 的搜索，输出里出现的 id 数量等于 50，
+   或者出现一条说明其余在哪的提示。
+
+## F-16 — `facet_probe` 的合法 `group_by` 无从得知，两轮都 400（未修）
+
+**现象**：两次会话、两个模型，各调了一次 `facet_probe`，两次都 400，
+两次都因为字段名猜错，之后再没有第二次尝试。
+
+**证据**：
+
+```
+run1 08:58:14  group_by: ["published_year"]
+  → openalex [http] 400 {"error":"Invalid query parameters error.",
+     "message":"published_year is not a valid field. Valid fields are underscore or
+      hyphenated versions of: abstract.search, abstract.search.exact, apc_list.currency,
+      ... （此处开始是 200 多个字段名，输出被截断）
+run2 09:06:27  group_by: ["publication_year", "venue"]
+  → 同样的 400，这次是 "venue is not a valid field"（`publication_year` 本身是对的，
+     被 `venue` 一起带死）
+```
+
+**根因**：两层。
+
+1. **工具不告诉 agent 合法取值。** `list_providers` 报的是能力名
+   （`facet_group_by`），不是这个能力接受的维度名；`facet_probe` 的参数描述里
+   也没有枚举。于是 agent 只能猜一个"看起来像"的字段名，
+   而 OpenAlex 的合法名是 `publication_year` / `primary_topic.id` 这类内部命名；
+2. **一个坏维度让整条调用失败**，而不是坏的那个被拒、好的那个照做——
+   run2 的 `publication_year` 是合法的。
+
+外加一条放大器：报错把 OpenAlex 的 200 多个合法字段名原样倾进上下文，
+再被 F-15 的截断砍断，agent 拿到的是一份**被砍了一半的字段表**，
+连"从错误信息里学"都做不到。
+
+**后果**：`facet_probe` 是 `../prototype.md` 里唯一的**廉价诊断**通道
+（`group_by` 是 $0.0001/call，比 `works_search` 便宜一个数量级），
+本来的用途正是"先看看这个主题的年代/venue 分布，再决定往哪搜"。
+两轮里它 100% 失败，两个 agent 都在第一次失败后放弃了这条路。
+F-7d 说"九个工具只用了三个半"，这条给出了其中一个的具体原因：
+**不是 agent 不想用，是用不了。**
+
+**补上它需要**：
+
+1. `facet_probe` 的参数描述里枚举本服务支持的维度（一个短的白名单，
+   映射到各 provider 的内部字段名），并在 Service 侧做映射而不是透传；
+2. 非法维度就地拒绝并**只回列白名单**（不超过 20 项），不要转发上游的全量字段表；
+3. 多维度调用里坏的那个被跳过、好的那个照做，失败记进 `Failure` 而不是整调用 400。
+
+## F-17 — Reviewer 的建议按 `(action, target)` 去重，而 `target` 是可选字段（未修）
+
+**现象**：Reviewer 从 episode 中段起完全失灵。run2 的 Reviewer 调了 13 次
+`provide_advice`，**只有 4 条送达**，其余全部被同一个理由拒绝：
+
+```
+Advice refused (duplicate_action_target): 'stop' was already advised for target ''.
+Advice refused (duplicate_action_target): 'refine_query' was already advised for target ''.
+Advice refused (duplicate_action_target): 'rerank' was already advised for target ''.
+```
+
+注意 `target ''`——**每一条的 target 都是空串**。
+
+**证据**（run2 的时间线，这条的严重性全在时间线上）：
+
+| 时刻 | 事件 |
+| --- | --- |
+| 09:05:46–09:06:00 | 送达 4 条（`rerank` / `refine_query` / `add_source` / `stop`） |
+| 09:07:28 起 | 之后 9 次全部 `duplicate_action_target`，只有 09:07:39 的 `expand_citation` 挤进去 |
+| 09:09:14–09:18:38 | 4 次尝试，全拒。**这 13 分钟里 Main 做了 20 多次工具调用、把池子从 9 篇扩到 28 篇——无人复核** |
+
+而 §1.5 的表说明，池子正是在这一段从 F1 0.27 那个量级掉到 0.20 的。
+
+**根因**（读 `core/review.ts:143-172` 就能看出，gate 本身写得没错）：
+gate 有三道闸门，**粗的那道吞掉了细的那道**。
+
+```ts
+const noveltyKey = text(candidate.noveltyKey ?? candidate.novelty_key, 200);
+const target = text(candidate.target, 200);           // ← 可选字段，缺省是 ""
+...
+if (seenNoveltyKeys.has(noveltyKey)) { ... }          // 细：按"这次新在哪"去重
+const actionTarget = `${action}|${target}`;
+if (seenActionTargets.has(actionTarget)) { ... }      // 粗：action|"" → 退化成纯 action
+```
+
+`target` 在工具 schema 里**不在 `required` 里**（`index.ts:947` 只要求
+`action` / `instructions` / `novelty_key`），`profiles/reviewer.md` 里也没有一句话
+让 Reviewer 填它。于是 `action|target` 恒等于 `action|""`，
+"每种 action 一个 episode 只能用一次"——**比 `DEFAULT_MAX_PER_ACTION = 2`
+还严，也把 `novelty_key` 这道为它设计的细闸门整个架空了**。
+`DEFAULT_MAX_PER_EPISODE = 6` 同样没起作用：13 次尝试只投递 4 条，
+不是预算用完，是被粗闸门挡的。
+
+**后果**：
+
+- **S11 的 R1..R7 七个检测器，实际每个 action 一个 episode 只能激发一次。**
+  一个长 episode（run2 是 42 次调用）后半段无论出什么问题都传不出去；
+- G-7 记的是"判据 3 的『被 novelty key 挡下』在真实运行里没走到"。
+  这次走到了，但**走到的是另一条路**：真实运行里挡下建议的是 `action|target`，
+  `duplicate_novelty_key` 一次都没触发过。G-7 应据此改写；
+- M 轴（在线拓扑）要比较的是"Reviewer 介入 vs 不介入"，
+  而当前实现下"介入"的剂量被一个可选字段的缺省值决定——**这个对照组不成立**。
+
+**补上它需要**（按改动量排序，第一条最小且足够）：
+
+1. **让 `target` 必填**，并在 `profiles/reviewer.md` 里说明它是"这条建议针对
+   哪次调用 / 哪条查询 / 哪篇论文"——Reviewer 本来就在正文里写这些，
+   只是没往字段里放；
+2. 或者反过来：`target === ""` 时**跳过** `action|target` 这道闸门，
+   让 `novelty_key` 与 `maxPerAction` 独立生效（它们本来就是为这件事设计的）；
+3. 无论选哪条，`duplicate_action_target` 的拒绝文案要能让 Reviewer 学会补救——
+   现在的"Repeating it cannot change the outcome"读起来像"这个方向到此为止"，
+   而实际含义是"你没填 target"。实测 Reviewer 读完之后的反应是**放弃**，
+   不是补 target（它在推理里写 "My job is done for this episode"）。
+
+## F-18 — Reviewer 的证据白名单只覆盖 `evidence_ids`，不覆盖建议正文（未修）
+
+**现象**：gate 的 `unknown_evidence` 校验是有的，而且有效——但它校验的是
+`evidence_ids` 字段，Main 读的是 `instructions` 正文，两者不是同一份内容。
+Reviewer 在正文里点名了一篇 trace 里不存在的论文，畅通无阻。
+
+**证据**（run2 Reviewer 的第一条建议，也是被送达的四条之一）：
+
+```
+喂给 Reviewer 的 trace 写着：
+  Evidence found (20) - these ids are the only ones you may cite: ...
+
+它发出的建议：
+  action: "rerank"
+  instructions: "Commit the foundational and widely-cited papers ...,
+                 including Godard et al. (CVPR 2017) as the original framework,
+                 plus representative approaches: MonoViT (2208.03543), RA-Depth
+                 (2207.11984), Manydepth2 (2312.15268), NimbleD (2408.14177)."
+  evidence_ids: ["2208.03543","2207.11984","2312.15268","2408.14177"]   ← 四条全在 trace 里，校验通过
+```
+
+`Godard et al. (CVPR 2017)` 当时不在那 20 条里，也没有 id——它是 Reviewer
+从自己的参数里背出来的。它随建议原样投递给了 Main。
+
+同一条建议还暴露第二个问题：**`action` 与内容不符**。这条的 action 是 `rerank`，
+内容却是"把这几篇提交进答案池"（那是 `organize_answer`）。
+run2 的 Reviewer 还用 `stop` 发过整段总结。
+
+**根因**：
+
+1. 校验面窄于投递面：`core/review.ts:192-204` 只遍历 `evidenceIds`，
+   `instructions` 是自由文本，一个字都没被检查；
+2. `action` 是个纯声明字段，gate 只验它在枚举里（`ADVICE_ACTIONS`），
+   不验它与 `instructions` 是否一致。
+
+**后果**：
+
+- `../prototype.md` §7.2 说"有限动作空间**正是建议可归因的原因**"。
+  如果 `rerank` 的内容可以是 organize、`stop` 的内容可以是总结，
+  那么按 action 统计的"Reviewer 建议了什么"就是错的账——
+  M 轴与 P 轴都要用这份账；
+- 与 F-14 串成完整链条：**Reviewer 正文里的一个无 id 论文 → Main 照抄进答案池 →
+  答案池不校验来源 → 它进入最终答案**。这次链条只走了一半
+  （Main 没提交 Godard 2017，但提交了 Reviewer 给的 RA-Depth），
+  两处各修一处即可断链，两处都不修则它随时会走完。
+
+**补上它需要**：
+
+1. 正文里出现的 id 形状串（arXiv id / DOI / `W\d+`）一并过 `evidenceIds` 校验；
+   自然语言的"作者+年份"没法机器校验，所以配套要求是
+   **建议里点名一篇论文时必须给 id**，profile 侧写死；
+2. 一条便宜的一致性检查：`organize_answer` 之外的 action，
+   其 `instructions` 不得以"commit/add to the pool"起头——或者反过来，
+   给 gate 一个极小的 action↔动词表，不符就拒并说明该用哪个 action。
+
+## F-19 — 一次超时之后 `judge_level` 一路降到 `off`，L3b 全程未参与（未修）
+
+**现象**：agent 的降级方向是"把可选层关掉"，而 L3b 判别层恰好是可选的那层。
+S12 刚做出来的判别栈，在真实 episode 上一次都没跑。
+
+**证据**（run2 的前四次 `search_metadata`）：
+
+```
+09:03:34  judge_level: "l3b",  top_k: 50, 5 条 subquery   → 15000ms 超时
+09:04:35  judge_level: "auto", top_k: 30, 3 条 subquery   → 15000ms 超时
+09:05:33  judge_level: "off",  top_k: 20, sources:["arxiv"] → 3645ms，20 条
+09:05:47  judge_level: "off",  top_k: 50, sources:["openalex"] → 3562ms，50 条
+```
+
+此后**剩下 11 次 `search_metadata` 全部是 `off`**。run1 的模型连
+`judge_level` 参数都没送过（该轮工具集是旧版，没有这个参数）。
+
+**根因**：F-7c（`default_timeout_ms: 15000` 偏紧）叠加 S12 判据 2 记录的
+L3b 实测耗时——`worklog.md` §8 那条写着 L3b 判 30 篇的中位耗时是 **543765ms**，
+即约 9 分钟。**15 秒的超时与 9 分钟的判别，在同一次调用里不可能共存**：
+带 `judge_level=l3b` 的调用是必然超时，不是偶然超时。
+agent 之后的降级完全理性——它在推理里明确写了 "perhaps l3b timeout due judging 50"。
+
+**后果**：
+
+- **J 轴在 agent 路径上的一切结论都不成立。** J0/J2 的数字来自
+  `experiments/judge-ablation`，那是绕过 agent 的路径（超时另设）；
+  真实 agent 会话里 L3b 的参与率是 **0/13**。G-9 记的是"判别账目流到
+  $\bar{\tau}_t$ 没经过真实 episode"，这条更硬：**不是没验，是跑不起来**；
+- 它也解释了 §1.5 的 precision 为什么这么低：判别层本该在这里过滤
+  BEVDepth、radar perception 这类扩展噪声，而它全程不在场。
+
+**补上它需要**：
+
+1. 超时不能是一个常数：判别档位与 `top_k` 已知时，超时应当是它们的函数
+   （`off` 走 15s，`l3b` 至少要 `max_papers_l3b × 单篇耗时` 的量级）；
+2. 或者把带判别的搜索改成两跳（先返回候选、判别异步回填），
+   这是设计改动，需要 `D-nn`；
+3. **在此之前，工具描述不该把 `l3b` 呈现成一个可以随手选的档位**——
+   当前它看起来和 `off` 一样是个平价选项，实测差 467 倍（`worklog.md` §8）。
+
+## F-20 — `expand_citations` 的 fanout 按 provider 原序截断，不做相关性选择（未修）
+
+**现象**：`fanout` 小的时候，取到的是参考文献表里**最前面的 N 条**，
+不是最相关的 N 条。而对 backward 方向，"最前面"基本等于"最通用的工具类论文"。
+
+**证据**（run2，从 Monodepth2 backward，`fanout: 10`）：
+
+```
+backward expansion from 1 seed(s): 9 paper(s) reached over 9 edge(s)
+1. ORB-SLAM: A Versatile and Accurate Monocular SLAM System
+2. Learning Depth from Single Monocular Images Using Deep Convolutional Neural Fields
+3. U-Net: Convolutional Networks for Biomedical Image Segmentation
+4. Predicting Depth, Surface Normals and Semantic Labels ...
+5. Familiar Size and the Perception of Depth        ← 1952 年的心理学论文
+```
+
+从 Tosi 2019 backward，`fanout: 10`，第 1 条是 **Adam: A Method for Stochastic
+Optimization**。而把 `fanout` 提到 25 想多看一些，两次都撞上 15 秒超时（F-19 同源）。
+
+**根因**：Service 侧对 `referenced_works` / `cited_by` 的截断是原序切片，
+没有任何相关性排序介入；而 fanout 上限（25）与超时（15s）又把"多取一些再筛"
+这条路堵死。**于是 agent 面对的选择是"取 10 条噪声"或"超时"。**
+
+**后果**：
+
+- 它与 F-11 不是同一条：F-11 说的是**图本身稀疏**（referenced_works 为空），
+  不可修；这条说的是**图不空时我们选错了子集**，可修；
+- 两轮会话里 `expand_citations` 共 6 次调用，产出进入答案池的贡献接近零，
+  引入的噪声（BEVDepth、radar perception、低照度增强、SLAM 综述）
+  却触发了 Reviewer 的一条 `rerank` 建议——**扩展的净效应是负的**；
+- E 轴要测"扩展带来的增量召回"，在这条修好之前测到的是截断策略的效应，
+  不是扩展的效应。
+
+**补上它需要**：
+
+1. fanout 截断前先按一个廉价信号排序（与种子共享的主题/概念、
+   `cited_by_count`、年份窗口），至少不要把 1952 年的心理学论文排在前面；
+2. 或者取全量后交给已有的排序栈（`../prototype.md` L1），
+   这需要先确认 L1 在扩展路径上是被调用的（F-6 说单源单查询时它是恒等变换）；
+3. 回归断言：从一篇 CV 论文 backward 扩展，返回集合里
+   `U-Net` / `Adam` 这类通用工具论文不占据前列。
+
 ---
 
 ## 会话中的 Agent 行为观察
 
-这一节记的不是代码缺陷，而是**这次会话暴露出的 agent 行为特征**。
+这一节记的不是代码缺陷，而是**会话暴露出的 agent 行为特征**。
 它们对实验设计有直接影响，所以一并记下。
+B-1..B-5 出自 2026-08-21 的首次会话，B-6..B-10 出自 §1.5 的双模型对照。
 
 **B-1（做对了）自我反思的定位准确。** 被追问后，agent 准确指出自己把问题理解成了
 "superpixel-based segmentation"而非"region-based **active learning** for segmentation"，
@@ -692,6 +1129,59 @@ OpenAlex client error 400: {"error":"Invalid query parameters error.",
 （`SCHOLAR_REVIEWER` 未设，且见 G-1：即使打开也只在 episode 之后介入）。
 **这次会话是 G-1 的一个活案例**：中途的四个 checkpoint 里至少有两个
 （"检测到覆盖不足"、"一轮候选合并完成"）本该在 07:38 前后触发。
+
+**B-6 更多的搜索换来更低的 F1。** §1.5 的两轮是同一条查询、同一 profile、
+同一套工具，只有模型不同：run2 的调用数是 run1 的 2.6 倍、时长 4.5 倍、
+池子 3 倍大，**F1 却从 0.273 掉到 0.195**。扩出来的 19 篇里只有 1 篇是 gold。
+**含义**：不能把"工具调用次数"或"池子大小"当作搜索质量的代理量。
+官方权重里效率占 20%，而这两个量与 F1 在这次测量里是**反向**的——
+任何以"更充分地检索"为名的改动，都必须同时报 precision，
+否则它可能正在同时打低两项分数。
+
+**B-7 任务被读成"写一张代表作地图"。** 用户问的是
+"哪些论文包含了 X 方面的研究"，13 篇 gold 集中在 2021–2024 的
+multi-frame / dynamic scene / 单目-多视图融合。run2 提交的 28 篇里有 11 篇是
+2016–2019 的奠基工作，并在池子的 `note` 里主动写下
+"a representative map, not an exhaustive bibliography"。
+**这不是理解失败，是读法选择**——而且是 agent 明确意识到并写下来的选择。
+Reviewer 也认同它（"appropriately characterized"）。
+**含义**：`np-agent.md` 里缺一条关于"清单式问题 vs 综述式问题"的判别；
+在补上之前，AutoScholarQuery 这类"列出满足条件的论文"的数据集上，
+低召回可能来自读法而不是检索能力，**归因时必须先排除这一项**（对照 B-2）。
+
+**B-8 被问"你找到了吗"时，两个模型都先去检索。** 用户贴出 13 篇 gold 问
+"你有找到这些文章吗"，run1 与 run2 的第一反应都是发起新的 `search_metadata`。
+run1 的用户连打断两次（"别去搜，我是说，你搜到的文章中包不包含这些"、
+"再次回答一下"），而该轮**最终一句回答都没输出**就结束了；
+run2 被"不用再去扩展了，你只需要如实回答我"叫停后才作答，
+作答本身是准确的（逐篇列出"已提交/已检索未提交/未核验"三种状态）。
+**含义**：对答案池的自查是一个**不需要检索**的动作，而工具集里没有
+"读回我自己的池子"这条路——池子的当前内容只在 `update_answer_pool`
+的返回里出现过一次，且被 F-15 截断。这条同时是 F-15 的一个后果面
+和一条产品缺口。
+
+**注意它有两半，进行中的答案池面板只覆盖一半**：面板（工作区里
+`tui/answer-pool-panel.ts`，截至 2026-08-22 未提交）让**人**能随时翻看池子，
+这一半正在被解决；**agent 自己没有读回池子的路**，这一半没有。
+B-8 这两轮里失败的是后者——用户问的时候，agent 手上并没有一份可读的池子。
+补它的形状很小：一个只读的 `read_answer_pool`，或让 `update_answer_pool`
+接受空的 `add`（当前会不会被当成无效调用需要确认）。
+
+**B-9 agent 会把 Reviewer 转述的 id 当作自己的检索结果。** RA-Depth
+（`2207.11984`）从未出现在 run2 任何一次工具返回里，只出现在 Reviewer 的建议里，
+agent 直接把它提交进了答案池并配了一句 `why`。
+**含义**：Reviewer 的建议在 agent 眼里与工具返回**同权**。
+S11 的设计把建议定位成"提示下一步动作"，实测它还充当了**证据来源**。
+这是 F-14 与 F-18 必须一起修的行为依据。
+
+**B-10 Reviewer 的第一反应是"把找到的全部提交"。** run1 的 Reviewer 首条建议是
+"Commit the 20 retrieved papers to the answer pool immediately"，
+run1 的 agent 照做了大半（提交 9 篇，含内窥镜等应用向论文）。
+**含义**：Reviewer 当前的隐含目标是**填满答案池**（`organize_answer` 这个
+action 是 S10 为"搜得好但没提交"加的，见 `core/review.ts:25-34`），
+而评测是 F1。**一个只推 recall 的 sidecar 会系统性地打低 precision**——
+`profiles/reviewer.md` 里需要一条明确的 precision 侧约束，
+否则 M 轴测到的"Reviewer 有帮助"可能只是"池子更大"。
 
 ---
 
@@ -812,6 +1302,13 @@ extension 侧的解析与 `PublicSearchTrace` 的 `judge` 字段各有单测。
 但这条判据验的是账目是否流到轨迹里，不是判得准不准——所以这是一次
 **便宜且有效**的验证，只是要在记录里写明篇数被降过。
 
+**2026-08-22 更新（F-19）**：这条比记录时更硬。§1.5 的 run2 是一次真实 agent
+episode，它**主动送了 `judge_level: "l3b"`**，结果 15 秒超时；此后 11 次
+`search_metadata` 全部降到 `off`。所以不只是"没验过"，而是
+**在当前超时配置下，agent 路径上的 L3b 必然超时**，这条缺口靠"找机会跑一次"
+补不上，得先修 F-19。上面那个降篇数的办法依然可用（它同时把耗时降下来了），
+但它验的是 forced 路径，不是 agent 自己选 l3b 的路径。
+
 ### G-10 — L3a / L3c 未实现，J 轴只有 J0 与 J2 两组（S12）
 
 **设计要求**：`../prototype.md` §4.1 定义三档
@@ -858,6 +1355,15 @@ novelty key 挡的是"同一个意思换个说法"，action|target 挡的是"同
 **补上它需要**：一次 Reviewer 用同一个 novelty key 重发、或 target 不同而语义重复的
 真实运行。可以在下一次 M 轴运行里顺带观察，不需要单独的工作项。
 
+**2026-08-22 更新（F-17）**：又跑了两次真实 episode，`duplicate_novelty_key`
+**依然一次没触发**，而 `duplicate_action_target` 触发了 **9 次**。原因现在明确了，
+且不是"运气不好"：`target` 是可选字段、Reviewer 从不填，
+于是 `action|target` 恒为 `action|""`，永远先于 novelty key 之后的那道闸门命中——
+换句话说，**在 target 缺省的实现下，`duplicate_novelty_key` 这条路
+在真实运行里不可达**。这条缺口不再是"等一次合适的运行"，
+它的前置是 F-17：先让 target 有值（或让空 target 跳过粗闸门），
+`duplicate_novelty_key` 才有机会被走到。
+
 ### G-8 — S11 判据 8 的 TUI 交互半边未验（S11）
 
 **判据原文**：TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
@@ -900,6 +1406,15 @@ note / 每条的 `why`），空池渲染成 `Answer pool: EMPTY`；两条单测�
 **补上它需要**：S11 的判据 2 与判据 4 一起跑一次真实检索，确认 Reviewer 在
 **池子被写入之后**收到的轨迹里含 pool 段。这是 S11 的验收，不需要新增工作项。
 
+**2026-08-22：这条缺口可以关闭。** §1.5 的两次会话里，活的 Reviewer
+确实读到了池子——run2 的第五、六份 trace 里带着完整的 pool 段
+（`Answer pool: 26 committed, 0 withdrawn.` + 每条的 `why` + `note`），
+而且它据此写了判断（"the pool is explicitly noted as representative rather
+than exhaustive"）。渲染层之外的作用面成立。
+**但读到不等于读对**：它在池子已含 11 篇 2016–2019 奠基工作时给出的评价是
+"excellent coverage"，而对照答案说明那正是失分处（B-7 / B-10）。
+覆盖缺口的**检出能力**是另一件事，不在这条判据里，记在 B-10。
+
 ### G-5 — 排序栈只有 L1 真实存在，判别器完全没有（S7）
 
 **设计要求**：`../prototype.md` 的 L0–L3 排序栈——L0 资格过滤、L1 RRF 候选控制、
@@ -937,6 +1452,13 @@ L2 与参数外提尚无 stage。
 | F-5 | 与 G-4 相关；新增的是评测协议侧的时间窗映射 |
 | F-6 | 是 G-3（`intent` 无作用面）与 G-5 的量化后果，非新缺口 |
 | B-5 | 为 G-1 提供了一个真实案例 |
+| F-14 / F-15 | **新，未修**。S10 验的是"池子能写、能读、能算 Recall@k"，没有验**写进去的东西从哪来**；S7 验的是九个工具各自可调用，没有验 agent 是否看得见它们的返回 |
+| F-16 / F-20 | **新，未修**。都是 F-7d（"九个工具只用了三个半"）的具体原因，从"agent 不用"细化成"用了但不可用" |
+| F-17 | **新，未修**。是 G-7 的前置：那条缺口不是等不到样本，是在当前实现下不可达 |
+| F-18 | **新，未修**。S11 判据 6/7 验的是 gate 的**字段**校验（`unknown_evidence` 触发过三次），没有验 gate 的校验面是否覆盖真正投递给 Main 的那段文本 |
+| F-19 | **新，未修**。把 G-9 从"没验过"改写成"跑不起来"，并让 J 轴在 agent 路径上的结论全部失效 |
+| B-6 / B-7 | 为 §1.5 的 F1 反向提供了行为解释；B-7 是 B-2（归因错误）的同族，都要求归因前先排除读法 |
+| B-9 / B-10 | 分别是 F-14 与 F-17 的行为依据：建议被当成证据、sidecar 只推 recall |
 
 另需记一笔：`experiments/eval-runner/run.mjs` 有完整的运行与记录能力，
 但**没有任何指标**——不读标准答案，不算召回。AutoScholarQuery 的
@@ -971,8 +1493,32 @@ L2 与参数外提尚无 stage。
 | **M 轴开跑之前** | **G-8**：一次交互式 TUI 的 Reviewer 对话查证 | D-10 把"用户能直接与 Reviewer 对话"列为常驻化的第二条理由，而人工 review 是 $NP_0$ 的种子来源。**需要人在 TUI 前**，无法自动化 |
 | 便宜，随时 | **G-9**：把 `judge.max_papers_l3b` 临时降到 3–5 跑一个 episode | 验的是判别账目流到 $\bar{\tau}_t$，不是判得准不准，所以降篇数不影响这条判据 |
 
+2026-08-22 的双模型对照（§1.5）新增的一批。**它们与上表的分工是清楚的**：
+上表那些只在绕过 agent 的路径上发作，这批**只在 agent 路径上发作**，
+所以两批互不阻塞，可以并行推进——但下面这批有一条共同的时机约束，
+写在表后。
+
+| 何时做 | 做什么 | 为什么是这个位置 |
+| --- | --- | --- |
+| **下一件，很小** | **F-14**：`update_answer_pool` 校验 id 来自本会话 `evidenceIds` | 改动最小（gate 侧同样的校验已经写好了，见 `review.ts:197`，直接复用），收益最大：在它之前，Recall@k 里"检索到的"与"背出来的"无法区分，**所有召回数字的含义都是模糊的**。它对 §1.5 那两轮是可回溯验证的——RA-Depth 与 MonoViT 的 DOI 应当被拒 |
+| **下一件，很小** | **F-17**：`target` 必填，或空 target 时跳过 action-target 那道闸门 | 一行量级的改动，恢复的是**整个 S11 的作用面**。当前每种 action 一个 episode 只能用一次，长 episode 的后半段无人复核——而 §1.5 的 precision 正是在那一段掉下去的。它同时是 G-7 的前置 |
+| **任何新的 agent 路径测量之前** | **F-15**：截断处报出总数与取回办法；`rank_candidates` 改吃 id | 改动比上面两条大，但它是 F-14（凭记忆写 id）、F-16（学不到字段表）、`rank_candidates` 退化三者的共同根因。**在它之前，agent 路径上测到的任何"策略"都是被截断的上下文的产物** |
+| **J 轴报 agent 路径结论之前** | **F-19**：超时按判别档位与 `top_k` 取值，而不是常数 15s | L3b 判 30 篇要 9 分钟（`worklog.md` §8），15 秒的常数超时让 agent 选 l3b 必然超时、必然降级。不修它，J 轴只有绕过 agent 的那一半数字 |
+| **E 轴开跑之前** | **F-20**：fanout 截断前先按廉价信号排序 | E 轴要测的是"扩展带来的增量召回"，而当前测到的是"原序切片的效应"——两轮会话里扩展的净效应是负的（引入噪声、贡献接近零） |
+| 与 F-14 一起 | **F-18**：证据校验覆盖 `instructions` 正文；action 与内容一致性 | 单独修价值有限，但它与 F-14 是同一条链的两端（建议里的无 id 论文 → 池子）。两处修一处即可断链，一起修才是把链拆掉 |
+| 便宜，随时 | **F-16**：`facet_probe` 枚举合法维度，坏维度就地拒绝 | 打开唯一的廉价诊断通道（$0.0001/call，比 `works_search` 便宜一个数量级），两轮 100% 失败 |
+| 需要决策，不是 bugfix | **B-7 的应对**：`np-agent.md` 补"清单式问题 vs 综述式问题"的判别 | 它决定 AutoScholarQuery 这类数据集上的低召回该归因到检索还是读法。属于 $NP_0$ 的内容改动，按 D-规矩要先立决策 |
+| 需要决策，不是 bugfix | **B-10 的应对**：`profiles/reviewer.md` 补 precision 侧约束 | 当前 Reviewer 的隐含目标是填满池子，而评测是 F1。改它会改变 M 轴的对照组含义，**必须记成 `D-nn`** |
+
+**这批的共同时机约束**：F-15 与 F-17 不修之前，不要再用 agent 路径上的
+会话去测任何策略性的东西。理由是这两条改变的不是结果好坏，而是**观测本身**——
+一个看不见大部分候选（F-15）、且中途起就收不到复核（F-17）的 agent，
+它表现出的"策略"是这两条缺陷的函数。§1.5 那张表已经付过一次这个学费：
+两个模型的差异有多少来自模型、有多少来自它们各自撞上截断的位置，现在无法分离。
+
 排序的依据是"单位改动量的信息增益"，不是严重程度——F-1 排第一不是因为它最严重，
 而是因为它改动最小、收益最大，且 §1 已经给出可直接用作回归断言的期望值。
+F-14 / F-17 排在这批最前面同理：两者都是小改动，且都能用 §1.5 的会话回溯验证。
 
 ---
 

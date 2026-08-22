@@ -55,6 +55,8 @@
 | 2026-08-21 | **`pytest` 在设了 `all_proxy=socks5://...` 的 shell 里 39 个用例失败。** httpx 读环境代理，缺 `socksio` 就抛 ImportError | `ImportError: Using SOCKS proxy, but the 'socksio' package is not installed` | 是本机 shell 环境，不是仓库缺陷。跑法：`all_proxy= uv run pytest -q` |
 | 2026-08-21 | **端口 8000 上有一个前一天（08-20 11:16）留下的 Search Service 进程。** 它只有 S2 时期的路由（`/`、`/health`、`/providers`、`/search`、`/search/metadata`、`/provider/{name}/query`），`GET /budget` 返回 404 | 第一次 S10 验收跑出来 `get_budget` 两次失败："Not Found Call list_providers ..."；新起的 uvicorn 因端口占用退出（日志里 `Errno 10048`） | 已 kill 并重起（否则任何测量都建立在旧代码上）。**值得单独记一笔的不是这个进程，是失败的样子**：一个陈旧服务不会说自己陈旧，它会以 404 的形式表现，而 404 的兜底文案把 agent 引向 `list_providers`。`run-scholar.mjs` 复用已在跑的 Service（先探 `/health`）这条设计放大了它——`/health` 在旧服务上照样 200。**建议 `/health` 报出 service 版本与路由集，让复用前能对齐**，记成一条未修问题 |
 | 2026-08-21 | **`tests/fixtures/README.md` 里 `search-metadata.json` 的录制命令与实际 fixture 不一致**（缺 abstract/authors/venue/published/urls），照它重录会得到一个更薄的 fixture | 按原命令重录后 45 行内容消失，而三个测试依赖那些字段 | 已顺手修正（重录 fixture 时必须先修它，否则 D-05"fixture 只录不手写"这条守不住），记在这里是因为它说明**录制命令本身也需要被验证** |
+| 2026-08-22 | **`runs/*/session.jsonl` 的 `session` 头不记模型与配置指纹。** 只有 `{id, timestamp, cwd, metadata.profile}`；模型要从每条 assistant 消息的 `provider`/`model` 字段倒推 | §1.5 那张双模型对照表里的 `vllm/qwen3.6-35b-a3b` 与 `kimi-coding/k3`，是逐条读 message 才确定的；`settings.json` 在两次会话之间被改过（`defaultProvider` vllm → kimi-coding），会话记录里没有任何痕迹 | 是记录格式问题，不影响本次结论（倒推得到的信息是完整的）。但它与 G-4（S9 产出不可复现）同族：**一次会话的可比性依赖仓库外的配置状态**。补法很小——`session` 头加 `model` / `settingsHash`，等有人动 run 记录格式时顺手做 |
+| 2026-08-22 | **kimi-coding 侧 429 会让会话静默停在最后一个问题上。** run2 末尾用户连问两次"你有哪些工具用了？哪些没有用"，两次的 assistant 记录都是 `stopReason: "error"`、`usage` 全 0、`errorMessage: 429 ... The engine is currently overloaded` | `20260822T090309Z_search-ez9i/session.jsonl` 最后两条 | 是上游限流，不是仓库缺陷。记一笔是因为**失败的样子**值得知道：轨迹里留下的是一条空的 assistant 消息，不是一个显式的失败标记——任何按消息数或 `stopReason` 统计 episode 的脚本都会把它算成一次正常回合 |
 
 ## 4. 前置修复的验收记录
 
@@ -426,3 +428,31 @@ top-10 的顺序和集合都变了。但三篇本来就在前 10 之内，
 判 30 篇一条查询将近 9 分钟。官方权重里运行效率占 20%，
 所以 L3b 在当前形态下**不是一个可以默认开着的档位**——
 这正是 §4.1 写"预算充裕走 L3a + L3b"的原因，而 L3a 还不存在（G-10）。
+
+## 9. 2026-08-22 的双模型对照会话（不是一个 stage）
+
+四段路线走完之后的第一次全系统实跑，**没有改任何代码**，所以不进 §1 的进度表。
+两次会话同一条查询、同一 `search` profile，模型分别是
+`vllm/qwen3.6-35b-a3b` 与 `kimi-coding/k3`，各带一个 sidecar Reviewer。
+用户在两轮之后各贴出 13 篇标准答案逐条核对。
+
+**产出全部记在 `backlog.md`**，这里只留索引与那个必须先看的数字：
+
+| 产出 | 在哪 |
+| --- | --- |
+| 两轮的完整数字（F1 0.273 / 0.195，成本、token、工具调用） | `backlog.md` §1.5 |
+| 七条新缺陷 F-14..F-20 | `backlog.md` 同名条目 |
+| 五条行为观察 B-6..B-10 | `backlog.md` "会话中的 Agent 行为观察" |
+| G-6 关闭、G-7 与 G-9 改写 | `backlog.md` 对应条目的 "2026-08-22 更新" |
+| 修改顺序（F-14 / F-17 排最前） | `backlog.md` "修改顺序"第三张表 |
+
+**先看的数字**：run2 的工具调用是 run1 的 2.6 倍、时长 4.5 倍、答案池 3 倍大，
+**F1 从 0.273 掉到 0.195**。§1 那个 0/4 → 4/4 说明召回层修对了；
+这一次说明**瓶颈已经移到策略层与证据层**，而且"搜得更多"在当前实现下
+是负收益。四段路线的下一步该从这里选，不是从"再修一个召回 bug"选。
+
+**一条纪律层面的教训**：F-14..F-20 全部**只在 agent 路径上发作**，
+批量评测（绕过 agent 直接调 Service）一条都碰不到。S10–S12 三段的验收
+与 J 轴消融走的都是后者，所以它们全绿而这七条一直在。
+`plan.md` §8 说判据是必要条件不是充分条件——这次给出了具体的形状：
+**判据验的是链路通不通，而缺陷藏在"agent 实际看到什么"里**。
