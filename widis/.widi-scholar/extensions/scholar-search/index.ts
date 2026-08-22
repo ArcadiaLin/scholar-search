@@ -51,7 +51,9 @@ import {
 	type ExtensionContext,
 	type ExtensionDefinition,
 } from "../../../../packages/widi/apps/widi/src/core/extension/api.ts";
+import type { TuiExtensionModule } from "../../../../packages/widi/apps/widi/src/tui/extension-host/index.ts";
 import {
+	ANSWER_POOL_EVENT,
 	type AnswerPool,
 	type AnswerPoolSnapshot,
 	createAnswerPool,
@@ -79,6 +81,7 @@ import {
 	ServiceRequestError,
 } from "./core/service-client.ts";
 import { createTraceCollector, type PublicSearchTrace, type TraceCollector } from "./core/trajectory.ts";
+import { activateScholarSearchTui } from "./tui/index.ts";
 
 /**
  * Tools bound their own output size: a candidate list or a capability table that
@@ -1910,6 +1913,19 @@ const extension: ExtensionDefinition = {
 					);
 				}
 
+				// After the write, never before: the panel must not show a pool that
+				// failed to reach disk, because the evaluation reads that file and a
+				// reader who saw the paper on screen would believe it counted.
+				try {
+					await context.extension?.host?.actions.emitExtensionEvent(
+						ANSWER_POOL_EVENT,
+						JSON.parse(JSON.stringify(snapshot)),
+					);
+				} catch {
+					// No TUI attached is the normal case under the eval runner. The pool is
+					// on disk and in `details`; only the live panel misses this change.
+				}
+
 				const text = [renderPoolSummary(snapshot), ...(lines.length > 0 ? ["", "this call:", ...lines] : [])].join("\n");
 				return {
 					content: [{ type: "text", text: truncate(text, MAX_OUTPUT_CHARS) }],
@@ -1971,5 +1987,13 @@ const extension: ExtensionDefinition = {
 		});
 	},
 };
+
+/**
+ * The terminal half, activated once for the application rather than once per
+ * agent. It contributes no tool and reads no service: it is a view onto the
+ * answer pool, fed over the extension event bus, which is the only channel the
+ * two halves share. See `tui/index.ts`.
+ */
+export const tui: TuiExtensionModule = { apiVersion: 1, activate: (api) => activateScholarSearchTui(api) };
 
 export default extension;

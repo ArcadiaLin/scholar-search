@@ -27,6 +27,17 @@
  * of calls is testable without a model, a service or a filesystem.
  */
 
+/**
+ * The bus name the pool is republished under after every change.
+ *
+ * The pool itself is module state in the core half, one Map per agent, and the
+ * TUI half is loaded by a different host that never sees it. The bus is the only
+ * channel between the two, so the panel's content is a snapshot pushed across it
+ * rather than a read - which also means the panel can only ever show what the
+ * agent has actually committed, never a half-written call.
+ */
+export const ANSWER_POOL_EVENT = "scholar-search:answer-pool";
+
 /** How many papers one episode may commit to. A pool that grows with the corpus is a corpus. */
 const DEFAULT_MAX_PAPERS = 200;
 const MAX_WHY_CHARS = 600;
