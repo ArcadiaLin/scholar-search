@@ -44,10 +44,22 @@ describe("the action space is closed", () => {
 		assert.match(result.reason ?? "", /refine_query/);
 	});
 
-	it("declares exactly the seven documented actions", () => {
+	it("declares exactly the documented actions", () => {
+		// `organize_answer` joined the set in S10: writing "maintain the answer pool"
+		// into the profile is a weak constraint, and this is the softer half of
+		// enforcing it (`docs/develop/plan.md` §3.4).
 		assert.deepEqual(
 			[...ADVICE_ACTIONS],
-			["refine_query", "add_source", "expand_citation", "rerank", "increase_diversity", "check_constraint", "stop"],
+			[
+				"refine_query",
+				"add_source",
+				"expand_citation",
+				"rerank",
+				"increase_diversity",
+				"check_constraint",
+				"organize_answer",
+				"stop",
+			],
 		);
 	});
 });
@@ -212,6 +224,13 @@ describe("what the Reviewer is shown", () => {
 			},
 		],
 		evidence: [{ paperId: "10.1/a", title: "A Paper", foundBy: "call-1" }],
+		answerPool: {
+			committed: 1,
+			withdrawn: 1,
+			note: "still missing the active-learning direction",
+			papers: [{ canonicalId: "arxiv:1810.09726", title: "CEREALS", why: "region-based AL, directly on point" }],
+			removed: [{ canonicalId: "arxiv:2101.00001", title: "Off Topic", reason: "not about segmentation" }],
+		},
 		budget: { totalCalls: 2, failedCalls: 1, callsByTool: { search_metadata: 1, provider_query: 1 } },
 		candidateCounts: { recalled: 120, returned: 20 },
 		failures: [{ source: "arxiv", errorType: "timeout", message: "arXiv timed out" }],
@@ -225,6 +244,26 @@ describe("what the Reviewer is shown", () => {
 		assert.match(rendered, /arxiv \[timeout\]/);
 		assert.match(rendered, /10\.1\/a :: A Paper/);
 		assert.match(rendered, /call-2 provider_query FAILED/);
+	});
+
+	it("shows the answer pool, because that is where a coverage gap is legible", () => {
+		// The point of S10 for the Reviewer: "eight papers" says nothing, "eight
+		// papers and all of them superpixel segmentation" says the thing
+		// `docs/design.md` §5.2's third checkpoint is about (`plan.md` §3.5).
+		const rendered = renderTraceForReviewer(fullTrace);
+
+		assert.match(rendered, /Answer pool: 1 committed, 1 withdrawn/);
+		assert.match(rendered, /arxiv:1810\.09726 :: CEREALS/);
+		assert.match(rendered, /why: region-based AL/);
+		assert.match(rendered, /withdrawn arxiv:2101\.00001/);
+		assert.match(rendered, /still missing the active-learning direction/);
+	});
+
+	it("says the pool is empty rather than saying nothing about it", () => {
+		// An absent section reads as "no information"; "EMPTY" is information, and it
+		// is what `organize_answer` advice is for.
+		const rendered = renderTraceForReviewer({ ...fullTrace, answerPool: null });
+		assert.match(rendered, /Answer pool: EMPTY/);
 	});
 
 	it("cannot show what the trace does not carry", () => {

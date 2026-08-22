@@ -45,9 +45,15 @@ from fastapi.testclient import TestClient
 from search_service.main import app
 from search_service.models import SearchResultItem
 
-item = SearchResultItem(paper_id="10.48550/arXiv.1706.03762", title="Attention Is All You Need",
-                        source="openalex", source_rank=1, doi="10.48550/arXiv.1706.03762",
-                        arxiv_id="1706.03762", openalex_id="W2963403868", year=2017)
+item = SearchResultItem(
+    paper_id="10.48550/arXiv.1706.03762", title="Attention Is All You Need",
+    source="openalex", source_rank=1, doi="10.48550/arXiv.1706.03762",
+    arxiv_id="1706.03762", openalex_id="W2963403868", year=2017,
+    published="2017-06-12", venue="NeurIPS",
+    abstract="The dominant sequence transduction models are based on complex recurrent or convolutional neural networks.",
+    authors=["Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan Gomez"],
+    urls={"paper": "https://arxiv.org/abs/1706.03762", "pdf": "https://arxiv.org/pdf/1706.03762.pdf"},
+)
 with TestClient(app) as c, \
      mock.patch("search_service.plugins.openalex.OpenAlexPlugin.search", mock.AsyncMock(return_value=[item])), \
      mock.patch("search_service.plugins.arxiv.ArxivPlugin.search", mock.AsyncMock(return_value=[])):
@@ -59,6 +65,11 @@ PY
 The `raw` block is kept deliberately: one test asserts that it is present in the
 fixture and absent from the summary the client produces, which is the check that
 `PaperSummary` has not quietly started carrying whole records.
+
+Re-recorded 2026-08-21 for `issued_queries[].native_query` (F-1). The item above
+now carries the abstract, authors, venue, date and URLs the fixture has always
+had; the earlier snippet in this file omitted them and would have re-recorded a
+thinner fixture than the one committed.
 
 ## `paper-lookup.json`
 

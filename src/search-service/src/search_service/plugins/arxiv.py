@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from search_service.exceptions import SourceError
+from search_service.identifiers import arxiv_id_of, parse_identifier
 from search_service.models import SearchResultItem
 from search_service.providers.base import SearchProvider
 from search_service.schemas import ProviderCapabilities
@@ -24,6 +25,83 @@ from search_service.schemas import ProviderCapabilities
 _ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 _ARXIV_NS = {"arxiv": "http://arxiv.org/schemas/atom"}
 _ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}|arxiv:\d{4}\.\d{4,5})", re.IGNORECASE)
+
+#: arXiv's own field prefixes. A term that already carries one is passed through.
+_FIELD_PREFIXES = ("all:", "ti:", "abs:", "au:", "co:", "jr:", "cat:", "rn:", "id:")
+#: arXiv's boolean operators, which a caller may write itself.
+_OPERATORS = frozenset({"AND", "OR", "ANDNOT"})
+#: Trimmed from the edges of an unquoted term. Sentence punctuation is not part of
+#: the word, and arXiv indexes the word.
+_EDGE_PUNCTUATION = "?!.,;:()[]{}\"'`"
+
+
+def _split_terms(query: str) -> list[str]:
+    """Split on whitespace, except inside double quotes. Quotes are kept.
+
+    Keeping the quotes in the token is what lets ``ti:"ViewAL"`` stay one term:
+    a quote here marks a span that whitespace does not break, not a token boundary.
+    """
+    terms: list[str] = []
+    buffer: list[str] = []
+    in_quotes = False
+    for char in query:
+        if char == '"':
+            in_quotes = not in_quotes
+            buffer.append(char)
+            continue
+        if char.isspace() and not in_quotes:
+            if buffer:
+                terms.append("".join(buffer))
+                buffer = []
+            continue
+        buffer.append(char)
+    if buffer:
+        terms.append("".join(buffer))
+    return [term for term in (item.strip() for item in terms) if term]
+
+
+def build_search_query(query: str) -> str:
+    """Build the ``search_query`` parameter arXiv will actually be sent.
+
+    arXiv's parser expands whitespace inside ``all:`` into **OR**, so
+    ``all:reinforced active learning`` is "any one of these words" - which for a
+    query made of common words returns a bag of unrelated papers and drops the
+    target entirely (``docs/develop/backlog.md`` F-1, measured 0/4 -> 3/4 on
+    ``AutoScholarQuery_train_1`` from this one change). Terms are therefore joined
+    with an explicit ``AND``.
+
+    A quoted phrase stays a phrase, but phrasing is not the default: the measured
+    all-phrase form returned zero results, so it is too strict to impose.
+    """
+    rendered: list[str] = []
+    for term in _split_terms(query):
+        if term in _OPERATORS:
+            rendered.append(term)
+            continue
+        if term.lower().startswith(_FIELD_PREFIXES):
+            # The caller wrote arXiv's own syntax; do not second-guess it.
+            rendered.append(term)
+            continue
+        if len(term) > 1 and term.startswith('"') and term.endswith('"'):
+            phrase = term[1:-1].strip()
+            if phrase:
+                rendered.append(f'all:"{phrase}"')
+            continue
+        word = term.strip(_EDGE_PUNCTUATION)
+        if word:
+            rendered.append(f"all:{word}")
+
+    if not rendered:
+        # Nothing usable to conjoin; send the caller's string as it was handled
+        # before rather than an empty query.
+        return f"all:{query.strip()}"
+
+    pieces: list[str] = []
+    for piece in rendered:
+        if pieces and pieces[-1] not in _OPERATORS and piece not in _OPERATORS:
+            pieces.append("AND")
+        pieces.append(piece)
+    return " ".join(pieces)
 
 
 def _extract_arxiv_id(text: str) -> str | None:
@@ -190,6 +268,29 @@ class ArxivClient:
                 now = time.monotonic()
             self._last_request_at = now
 
+    def build_params(
+        self,
+        query: str,
+        top_k: int,
+        native_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """The request parameters this client will send for a unified search.
+
+        Public and pure so the trajectory can record the query string that was
+        *actually issued* without a second implementation of the rewrite going out
+        of step with this one - the divergence between the two is what let F-1 hide.
+        """
+        params: dict[str, Any] = {
+            "search_query": build_search_query(query),
+            "start": 0,
+            "max_results": top_k,
+            "sortBy": "relevance",
+            "sortOrder": "descending",
+        }
+        if native_params:
+            params.update(native_params)
+        return params
+
     async def search(
         self,
         query: str,
@@ -201,15 +302,7 @@ class ArxivClient:
         """Query arXiv and return normalized result items."""
         await self._rate_limit()
         client = await self._get_client()
-        params = {
-            "search_query": f"all:{query}",
-            "start": 0,
-            "max_results": top_k,
-            "sortBy": "relevance",
-            "sortOrder": "descending",
-        }
-        if native_params:
-            params.update(native_params)
+        params = self.build_params(query, top_k, native_params)
 
         def _after_end_date(item: SearchResultItem) -> bool:
             if not end_date or not item.published:
@@ -255,7 +348,12 @@ class ArxivClient:
         exact: a version suffix is accepted and an unknown ID comes back as an
         empty feed rather than as fuzzy matches.
         """
-        arxiv_id = _extract_arxiv_id(paper_id) or paper_id.strip()
+        identifier = parse_identifier(paper_id)
+        # Versionless: ``id_list`` accepts a version but then pins the answer to it,
+        # and a caller asking for a paper wants the paper.
+        arxiv_id = arxiv_id_of(identifier, with_version=False) if identifier is not None else None
+        # An id from another space is a miss, not an error: the caller routes on
+        # the ``id_lookup`` capability and tries the next provider.
         if not arxiv_id:
             return None
         items = await self.native_query({"id_list": arxiv_id, "max_results": 1})
@@ -366,6 +464,16 @@ class ArxivPlugin(SearchProvider):
             field_map=self.config.get("field_map", {}),
             reliability=self.config.get("reliability", {}),
         )
+
+    def native_query_for(
+        self,
+        query: str,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> str | None:
+        value = self._client.build_params(query, 1, native_params).get("search_query")
+        return value if isinstance(value, str) else None
 
     async def search(
         self,

@@ -36,6 +36,15 @@ class SearchRequest(BaseModel):
     provider_params: dict[str, dict[str, Any]] | None = Field(
         default=None,
         description="Provider-native parameters keyed by provider name.")
+    judge_level: Literal["off", "auto", "l3a", "l3b", "l3c"] = Field(
+        default="off",
+        description=(
+            "How much relevance judging to spend on the candidates. The caller decides how much to buy; "
+            "the service decides how to execute it, which is why the model and the prompt are not in this "
+            "signature (`docs/prototype.md` §7.1). Configuration may pin the level for an ablation, and the "
+            "response reports what actually ran."
+        ),
+    )
 
     @field_validator("subqueries")
     @classmethod

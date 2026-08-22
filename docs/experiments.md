@@ -145,6 +145,35 @@ M 轴的全部设计目的，就是把最后一项从前三项里剥出来。
 **这个隔离是硬约束。** 若 M 轴的某一组带着 $k$ 尺度更新，它就和 P 轴的 P2/P3 重复，
 两条轴同时动，任何差异都无法归因。P 轴定义见 `prototype.md` §6.5，本文不重复。
 
+#### 4.1.1 P 轴作用在哪个条目集合上（S11 落地后的补充）
+
+$NP_k^{agent}$ 从第 2 版起分成两组（决策 D-12），而这个划分改变了 P 轴的操作面：
+
+- **绑定组 A**（当前 7 条，各带 `observable:` 元数据）：**P 轴的消融只作用于这一组。**
+  判据是"关掉它会让轨迹不同"，所以只有这一组的开关能产生可测差异。
+- **未绑定组 B**（当前 30 条，标 `observable: none`）：**排除在消融之外。**
+
+这一条不是收窄实验，而是修正一个会让结论失效的做法：S5 那次
+"全关 vs 全开轨迹形状明显不同"之所以难验（G-3），一个可能的原因就是当时 30 条里
+多数不可绑定——"全部关掉后轨迹不变"于是是**预期结果**，而不是实现出了问题。
+在 B 组上做消融，测到的是零效应加噪声。
+
+A 组当前的观察量清单（全部只用 $\bar{\tau}_t$ 的现有字段）：
+
+| 条目 | 观察量 |
+| --- | --- |
+| `phrase-and-keyword-both` | `subqueries` 中含引号的条数 |
+| `cover-two-readings-first` | 首轮 `subqueries` 两两内容词 Jaccard 的最小值 |
+| `carry-the-date-boundary` | 每个 `search_metadata` 调用的 `filters.end_date` 是否存在 |
+| `probe-before-second-round` | `callsByTool.facet_probe`，以及它与第 2 次 `search_metadata` 的先后 |
+| `reread-before-refetch` | `get_paper` 与 `search_metadata` 的比、`callsByTool.rank_candidates` |
+| `commit-incrementally` | `answerPool` 首次写入时刻相对最后一次 `search_metadata` |
+| `withdraw-with-reason` | `answerPool.removed[].reason` 是否非空 |
+
+**B → A 的提升是一条工作队列**，不是缺陷。每条 B 组条目都注明了绑不了的原因，
+其中"依赖尚不存在的观察量"那一类会随排序与判别层落地而变得可绑
+（例如 `growth-is-not-success` 需要排序质量的观察量，S12 之后才有）。
+
 ### 4.2 M 轴：在线拓扑（$k$ 更新关闭）
 
 | 组 | 配置 | 检验的问题 |
@@ -164,6 +193,31 @@ M 轴的全部设计目的，就是把最后一项从前三项里剥出来。
 M6a/b/c 是**安慰剂组**。它们回答一个 M0–M5 无法回答的问题：Main 究竟是在利用建议的语义，
 还是仅仅因为被插入了一段额外文本而改变了采样轨迹。缺了这组，即使 M3 显著胜出，
 机制解释仍然是空的。
+
+#### 4.2.1 一条实测到的、$\Delta_{\mathrm{sidecar}}$ 可能为负的机制
+
+S11 落地后的第一次真实运行（`develop/worklog.md` §7）给出了一个应当预注册的假设，
+因为它不是推测而是观察：
+
+**只读轨迹的观察者会强化候选集里已有的主题分布。**
+
+那次 episode 里 Reviewer 的第二条建议是"把 region proposal 与 image patches
+从子查询里去掉，收窄到 superpixel 聚合"。而 "image patches" 是提问者的原话，
+被漏掉的那一整个方向（region-based **active learning**）正在被收窄掉的那一侧。
+Reviewer 看不到 gold，这个判断在它掌握的信息下是合理的——
+问题在于**"这批结果不够聚焦"和"这批结果聚焦错了"在轨迹上长得一样**，
+而前者有一个显然的动作（收窄），后者没有。
+
+对 M 轴的两个后果：
+
+1. **$\Delta_{\mathrm{sidecar}}$ 的符号不能假定为正。** M3 输给 M0 是一个需要
+   预先容纳的结果，且它的解释不是"sidecar 无用"，而可能是这条具体机制。
+2. **需要一个观察量把它测出来**：建议前后**子查询词项集合的收缩率**
+   （$|terms_{t+1}| / |terms_t|$，对 `refine_query` 类建议）。
+   收缩率与召回变化的相关性，就是这条机制的直接检验。
+   它只用 $\bar{\tau}_t$ 的现有字段，不需要新通道。
+
+这一条按 §8 的规矩记成预注册的可证伪点，而不是等跑出结果之后回头解释。
 
 ### 4.3 M3† 的存在理由
 

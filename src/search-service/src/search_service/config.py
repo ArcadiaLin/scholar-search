@@ -123,6 +123,63 @@ class ServiceConfig:
                     limits[section] = dict(values)
         return limits
 
+    def get_judge_config(self) -> dict[str, Any]:
+        """Return the judging configuration, merged over defaults.
+
+        This is where $NP_k^{judge} \\to \\theta^S_k$ actually happens: `carrier`
+        names the preference file whose entries reach the judging prompt, and the
+        numeric fields are $HP_k$. ``carrier_path`` is resolved against this
+        config file's directory so the pointer survives being run from anywhere.
+        """
+        configured = self._yaml.get("judge", {})
+        judge: dict[str, Any] = {
+            "enabled": True,
+            "forced_level": None,
+            "provider": None,
+            "temperature": 0.0,
+            "max_papers_l3b": 30,
+            "max_criteria_per_query": 8,
+            "carrier": "../../widis/.widi-scholar/preference/np-judge.md",
+        }
+        if isinstance(configured, dict):
+            for key, value in configured.items():
+                # `forced_level` and `provider` are meaningfully null, so unlike
+                # the review section this merge keeps explicit nulls.
+                judge[key] = value
+        carrier = judge.get("carrier")
+        judge["carrier_path"] = (
+            (Path(self.settings.config_file).resolve().parent / str(carrier)).resolve() if carrier else None
+        )
+        return judge
+
+    def get_review_config(self) -> dict[str, Any]:
+        """Return the Sidecar Reviewer detector thresholds, merged over defaults.
+
+        These are $HP_k$, and this file is their only authoritative carrier - the
+        edge $\\theta^S_k = \\mathrm{Configure}(P, HP_k, NP_k^{judge})$ starts
+        here. The consumer is a TypeScript extension whose only other
+        configuration channel is environment variables, and thresholds scattered
+        across those leave an $HP$ search nothing to vary
+        (``docs/develop/decisions.md`` D-15).
+
+        The defaults are duplicated here on purpose: a missing ``review:`` section
+        must not leave the detectors comparing against ``None``, which would make
+        every one of them silently never fire.
+        """
+        configured = self._yaml.get("review", {})
+        review: dict[str, Any] = {
+            "min_searches_before_facet_probe": 3,
+            "subquery_jaccard_ceiling": 0.5,
+            "min_subqueries_for_monotony": 2,
+            "min_evidence_before_expansion": 10,
+            "max_failures_per_source": 3,
+            "max_fetch_per_search_ratio": 1.0,
+            "soft_call_budget": 40,
+        }
+        if isinstance(configured, dict):
+            review.update({key: value for key, value in configured.items() if value is not None})
+        return review
+
     def get_plugin_config(self, name: str) -> dict[str, Any]:
         """Return config dict for a named plugin.
 

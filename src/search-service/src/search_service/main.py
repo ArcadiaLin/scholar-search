@@ -18,6 +18,7 @@ from search_service.api import (
     paper_router,
     probe_router,
     providers_router,
+    review_router,
     search_router,
 )
 from search_service.call_ledger import CallLedger
@@ -78,6 +79,7 @@ app.include_router(expand_router)
 app.include_router(probe_router)
 app.include_router(fulltext_router)
 app.include_router(judge_router)
+app.include_router(review_router)
 
 
 @app.exception_handler(Exception)

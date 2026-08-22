@@ -56,6 +56,24 @@ S0–S9 原本在分支 `feature/widi-scholar-prototype` 上，一个 stage 一�
 | 08-21 | merge LLM provider 层（`aac617c`），排出 S10/S12 | `plan.md` §5；决策 D-09 |
 | 08-22 | 三次会话的横向审阅，得到一个负结果，排出 S11 | `../reviewer-design.md`；决策 D-10..D-12 |
 | 08-22 | 移交审阅：三处通路不存在 | 决策 D-13..D-15；本次文档重组 |
+| 08-21 | 前置修复 F-1 / F-2 / F-10 落地 | `worklog.md` §4 的 0/4 → 4/4 复跑 |
+| 08-21 | S10 落地 | 第一个 Recall@k：`AutoScholarQuery_train_1` 上 **0/4** |
+
+### 一条不可跨越的对照线：`EXTENSION_VERSION` 1 → 2
+
+**S10 之前跑过的任何检索行为数字都不能与之后的直接比较**，`plan.md` §3.8 第一条
+预先声明过这件事，这里记下它实际的分界与原因：
+
+| 变了什么 | 后果 |
+| --- | --- |
+| `update_answer_pool` 注册进 $T^M$（9 → 10 个工具） | step 预算里多了一项开销，调用构成必然变化。**S5 的验收判据正是"调用构成"，所以 S5 那张表不能与 S10 之后的运行对照**（决策 D-08 已写明） |
+| `search_metadata` 的 `query` 契约从"自然语言陈述"改成"词项按 AND 组合" | agent 写查询的方式变了 |
+| arXiv 的词间连接从隐含 OR 改成 AND（F-1） | 同一条查询的召回集完全不同 |
+| `SearchState.issued_queries` 多了 `native_query`；`Failure.error_type` 多了 `bad_id` | 旧的 `.json` 轨迹没有这两项 |
+
+分界点是 commit `8bc69de`（前置修复）与紧随其后的 S10 commit；
+`EXTENSION_VERSION` 从 `1` 变成 `2`，每次 eval run 的 provenance 里都记着它，
+所以"这个数字是哪一侧的"永远可查。
 
 ---
 

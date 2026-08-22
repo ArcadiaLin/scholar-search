@@ -72,6 +72,10 @@ function parseArgs(argv) {
 				args.deadlineMs = Number(value);
 				index += 1;
 				break;
+			case "--trace-dir":
+				args.traceDir = value;
+				index += 1;
+				break;
 			default:
 				if (flag.startsWith("--")) throw new Error(`unknown flag: ${flag}`);
 		}
@@ -114,8 +118,13 @@ async function runOneQuery(session, agentId, item, deadlineMs) {
 	if (!response.ok) {
 		return {
 			id: item.id,
+			// The agent id is the scorer's only way to find this query's answer pool,
+			// which is written as `<agentId>.answer.json`. Recorded even on failure:
+			// a failed query still has to be locatable to be counted as empty.
+			agentId,
 			query: item.query,
 			endDate: item.endDate ?? null,
+			gold: item.gold ?? null,
 			ok: false,
 			terminationStatus: response.code ?? "error",
 			error: response.error,
@@ -137,8 +146,11 @@ async function runOneQuery(session, agentId, item, deadlineMs) {
 
 	return {
 		id: item.id,
+		agentId,
 		query: item.query,
 		endDate: item.endDate ?? null,
+		// Carried through so scoring needs one file rather than two kept in step.
+		gold: item.gold ?? null,
 		ok: true,
 		terminationStatus: data?.kind ?? "completed",
 		stopReason: data?.stopReason ?? null,
@@ -160,7 +172,19 @@ async function main() {
 		throw new Error("nothing to run: pass --queries <file> or --query <text>");
 	}
 
-	const session = new WidiRpcSession({ repoRoot, namespace: args.namespace, script: args.script });
+	// The traces and the answer pools go where the scorer will look for them. Passed
+	// as an environment variable because that is the extension's only configuration
+	// channel (`docs/develop/decisions.md` D-15), and defaulted next to the run's
+	// own output so one run's answers cannot be read as another's.
+	const traceDir = resolve(repoRoot, args.traceDir ?? join(args.out, "trajectories"));
+	mkdirSync(traceDir, { recursive: true });
+
+	const session = new WidiRpcSession({
+		repoRoot,
+		namespace: args.namespace,
+		script: args.script,
+		env: { ...process.env, SCHOLAR_TRACE_DIR: traceDir },
+	});
 	const started = new Date().toISOString();
 
 	try {
@@ -224,6 +248,7 @@ async function main() {
 		const record = {
 			runnerVersion: RUNNER_VERSION,
 			provenance,
+			traceDir,
 			results,
 			runSummary: summary.ok ? summary.data : { error: summary.error },
 			finishedAt: new Date().toISOString(),
@@ -250,6 +275,7 @@ async function main() {
 			);
 		}
 		console.log(`written: ${join(outDir, "run.json")}`);
+		console.log(`traces and answer pools: ${traceDir}`);
 	} finally {
 		await session.shutdown();
 	}

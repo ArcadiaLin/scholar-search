@@ -19,6 +19,14 @@
  * "the agent looked", "the agent re-ordered" and "the agent searched again" have
  * to stay distinguishable in the trajectory.
  *
+ * A tenth is registered alongside them but is not one of the nine:
+ *
+ *   update_answer_pool  the episode's answer, as data rather than as prose
+ *
+ * The nine are retrieval tools; this one is the output mechanism, which is a
+ * different category and the reason $T^M$ going from nine to ten is acceptable
+ * where going to twelve would not be (`docs/develop/decisions.md` D-08).
+ *
  * `list_providers` comes first because it is the precondition for every other
  * tool that lets the agent write a provider-native query: the agent cannot pick
  * a source, a syntax or a field before it knows what exists and what is left of
@@ -43,7 +51,23 @@ import {
 	type ExtensionContext,
 	type ExtensionDefinition,
 } from "../../../../packages/widi/apps/widi/src/core/extension/api.ts";
-import { ADVICE_ACTIONS, type AdviceGate, createAdviceGate, renderTraceForReviewer } from "./core/review.ts";
+import {
+	type AnswerPool,
+	type AnswerPoolSnapshot,
+	createAnswerPool,
+	renderPoolSummary,
+} from "./core/answer-pool.ts";
+import {
+	ADVICE_ACTIONS,
+	type Advice,
+	type AdviceGate,
+	createAdviceGate,
+	type DetectedCondition,
+	type DetectorThresholds,
+	detectConditions,
+	FALLBACK_THRESHOLDS,
+	renderTraceForReviewer,
+} from "./core/review.ts";
 import {
 	createServiceClient,
 	type PaperSummary,
@@ -175,10 +199,47 @@ function describeHttpFailure(error: ServiceRequestError): string {
 				"call list_providers and pick a source that advertises what you need."
 			);
 		case 502:
-			return `The provider failed behind the service: ${detail} Another source may still be able to answer.`;
+			return describeUpstreamFailure(error, detail);
 		default:
 			return `${error.message} ${detail}`;
 	}
+}
+
+/**
+ * Report a total upstream failure with its classification and a next move that is
+ * true.
+ *
+ * The previous wording appended "Another source may still be able to answer" to
+ * every 502. When the run had exactly one usable source that sentence sent the
+ * agent looking for a second one that does not exist, and it retried blindly for
+ * three minutes instead (`docs/develop/backlog.md` F-2). So the alternatives come
+ * from the service, which is the only side that knows the registry, and the
+ * classification is reported rather than summarised: "rate limited until
+ * tomorrow", "no results" and "the source is broken" are three different
+ * situations that used to arrive as one string.
+ */
+function describeUpstreamFailure(error: ServiceRequestError, detail: string): string {
+	const lines = [`The provider failed behind the service: ${detail}`];
+	if (error.failures.length > 0) {
+		lines.push(
+			`failures (${error.failures.length}):`,
+			...error.failures.map(
+				(failure) => `  - ${failure.source ?? "service"} [${failure.errorType}] ${failure.message}`,
+			),
+		);
+		if (error.failures.every((failure) => failure.errorType === "rate_limit")) {
+			lines.push(
+				"Every failure above is a quota limit, so retrying the same call cannot succeed until the quota resets.",
+			);
+		}
+	}
+	const alternatives = error.alternativeSources;
+	lines.push(
+		alternatives.length > 0
+			? `Sources not tried on this call that could serve it: ${alternatives.join(", ")}.`
+			: "No other configured source advertises what this call needs, so switching source is not an option here.",
+	);
+	return lines.join("\n");
 }
 
 /** One candidate as a citation line plus an abstract view, never the whole record. */
@@ -223,6 +284,18 @@ function formatSearchState(state: SearchStateRecord): string {
 		`sources queried: ${state.selectedSources.join(", ") || "none"}`,
 		`queries issued: ${state.issuedQueries.length} | candidates recalled: ${state.recalled} | returned: ${state.returned}`,
 	];
+	// A provider that rewrites the query says so here. Reporting only the wording
+	// the caller chose hid an arXiv rewrite that turned every multi-word query into
+	// an OR bag (`docs/develop/backlog.md` F-1).
+	const rewritten = state.issuedQueries.filter(
+		(issued) => issued.nativeQuery !== null && issued.nativeQuery !== issued.query,
+	);
+	if (rewritten.length > 0) {
+		lines.push(
+			"queries as actually sent to the provider:",
+			...rewritten.map((issued) => `  - ${issued.provider}: ${issued.nativeQuery}`),
+		);
+	}
 	const filterKeys = Object.keys(state.filters);
 	if (filterKeys.length > 0) lines.push(`filters applied: ${JSON.stringify(state.filters)}`);
 	if (state.failures.length > 0) {
@@ -241,8 +314,14 @@ function formatSearchState(state: SearchStateRecord): string {
  * and an evaluation run has to record which tool set produced its numbers
  * (`AGENTS.md` §5.3). Bump it whenever the registered tools or their contracts
  * change - a run recorded against `1` must mean the same nine tools next month.
+ *
+ * `2`: `update_answer_pool` registered (S10); `search_metadata`'s `query`
+ * contract changed from a natural-language statement to AND-combined terms, and
+ * `SearchState.issued_queries` gained `native_query` (F-1). A run recorded
+ * against `1` is not comparable to one recorded against `2` on retrieval
+ * behaviour or on call composition.
  */
-export const EXTENSION_VERSION = "1";
+export const EXTENSION_VERSION = "2";
 
 export const TRACE_DIR_ENV_VAR = "SCHOLAR_TRACE_DIR";
 /**
@@ -268,8 +347,23 @@ export const REVIEWER_ENV_VAR = "SCHOLAR_REVIEWER";
  */
 export const REVIEWER_MODEL_ENV_VAR = "SCHOLAR_REVIEWER_MODEL";
 export const REVIEWER_PROFILE_ID = "reviewer";
-/** One review per episode. The checkpoint list in design.md §5.2 is richer; this is the last of them. */
-const MAX_REVIEWS_PER_AGENT = 1;
+/** The profile whose agents get a Reviewer attached. */
+export const SUBJECT_PROFILE_ID = "search";
+/**
+ * How many reviews may be in flight or waiting for one subject.
+ *
+ * `prompt` refuses a busy agent rather than queueing, so two triggers arriving
+ * close together would lose the second one silently - and a silently dropped
+ * trigger is indistinguishable from a trigger that never happened
+ * (`docs/reviewer-design.md` §8, first risk). So deliveries are serialised per
+ * subject, one in flight and one waiting; anything beyond that is dropped *and
+ * written into the review journal*, which is the part that matters.
+ *
+ * There is deliberately no cap on how many reviews an episode may run
+ * (`MAX_REVIEWS_PER_AGENT` is gone, D-14). Observation has no quota; only
+ * intervention does, and that cap lives on the gate.
+ */
+const MAX_QUEUED_REVIEWS_PER_SUBJECT = 2;
 
 function reviewerEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
 	const value = env[REVIEWER_ENV_VAR];
@@ -300,6 +394,29 @@ async function writeTrace(trace: PublicSearchTrace, cwd: string): Promise<string
 		return path;
 	} catch {
 		// A trace that cannot be written must not break the search it describes.
+		return undefined;
+	}
+}
+
+/**
+ * Persist the answer pool next to the trace, under the same agent-scoped name.
+ *
+ * On disk rather than only in memory because this file *is* the deliverable the
+ * benchmark reads: the scorer opens `${agentId}.answer.json` and computes
+ * Recall@k from it, and an episode whose pool never reached disk is an episode
+ * with no answer (`docs/develop/plan.md` §3.4). Written on every change rather
+ * than at the end, so a run that dies mid-episode still leaves what it had.
+ */
+async function writeAnswerPool(snapshot: AnswerPoolSnapshot, cwd: string): Promise<string | undefined> {
+	try {
+		const directory = resolveTraceDir(process.env, cwd);
+		await mkdir(directory, { recursive: true });
+		const path = join(directory, `${snapshot.agentId}.answer.json`);
+		await writeFile(path, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+		return path;
+	} catch {
+		// Unlike the trace, this failure is worth surfacing to the caller, so the
+		// tool checks the return value rather than this swallowing it silently.
 		return undefined;
 	}
 }
@@ -338,31 +455,100 @@ function summariseOutcome(outcome: unknown): string {
 	return `(no text; outcome kind: ${kind})`;
 }
 
+/**
+ * One entry in the review journal: a trigger, what it found, and what became of it.
+ *
+ * The journal exists because of one failure mode: a trigger that was dropped
+ * because the Reviewer was busy looks exactly like a trigger that never fired,
+ * and so does a Reviewer that answered in prose without calling the tool. Three
+ * different situations, one empty advice list (`docs/reviewer-design.md` §8).
+ */
+interface ReviewJournalEntry {
+	readonly at: string;
+	readonly trigger: "answer_pool" | "detector" | "attach";
+	readonly conditions: readonly string[];
+	readonly delivered: boolean;
+	readonly note: string;
+	/**
+	 * How far the search had got when this happened, in tool calls and in searches.
+	 *
+	 * Recorded because it is the only way to check the property that matters: a
+	 * review whose advice arrives after the last search cannot have changed the
+	 * search it reviewed, which is exactly the gap G-1 records. Wall-clock time
+	 * would not settle it; the position in the call sequence does.
+	 */
+	readonly atCall?: number;
+	readonly atSearch?: number;
+}
+
+/**
+ * One piece of advice that actually reached Main, and where in the search it did.
+ *
+ * `atSearch` against the episode's total search count is what answers "could this
+ * advice have changed the search it was about" - the question S8's acceptance
+ * criteria did not ask, which is how G-1 got through.
+ */
+interface DeliveredAdvice {
+	readonly advice: Advice;
+	readonly atCall: number;
+	readonly atSearch: number;
+}
+
 async function writeReview(
 	subjectAgentId: string,
 	reviewerAgentId: string,
 	gate: AdviceGate | undefined,
 	cwd: string,
-	outcome?: unknown,
+	journal: readonly ReviewJournalEntry[],
+	deliveredAdvice: readonly DeliveredAdvice[],
 ): Promise<void> {
-	if (gate === undefined) return;
 	try {
 		const directory = resolveTraceDir(process.env, cwd);
 		await mkdir(directory, { recursive: true });
 		const payload = {
 			subjectAgentId,
 			reviewerAgentId,
-			admitted: gate.admitted(),
-			refusals: gate.refusals(),
-			// What the Reviewer actually said, so "it had nothing to add" can be told
-			// apart from "it never answered" and from "it answered without recording
-			// a verdict". All three produce an empty advice list.
-			reviewerReply: summariseOutcome(outcome),
+			admitted: gate?.admitted() ?? [],
+			refusals: gate?.refusals() ?? [],
+			// What actually reached Main, as against what the gate admitted. They are
+			// the same list unless delivery failed, and that difference is the only
+			// evidence that it did.
+			delivered: deliveredAdvice,
+			// Every trigger, including the ones that produced nothing.
+			journal,
 		};
 		await writeFile(join(directory, `${subjectAgentId}.review.json`), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 	} catch {
 		// As with the trace: a review that cannot be archived must not break anything.
 	}
+}
+
+/** Read the service's thresholds, falling back per key rather than wholesale. */
+function thresholdsFrom(reported: Readonly<Record<string, number>>): DetectorThresholds {
+	const pick = (key: string, fallback: number): number => {
+		const value = reported[key];
+		return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+	};
+	return {
+		minSearchesBeforeFacetProbe: pick("min_searches_before_facet_probe", FALLBACK_THRESHOLDS.minSearchesBeforeFacetProbe),
+		subqueryJaccardCeiling: pick("subquery_jaccard_ceiling", FALLBACK_THRESHOLDS.subqueryJaccardCeiling),
+		minSubqueriesForMonotony: pick("min_subqueries_for_monotony", FALLBACK_THRESHOLDS.minSubqueriesForMonotony),
+		minEvidenceBeforeExpansion: pick("min_evidence_before_expansion", FALLBACK_THRESHOLDS.minEvidenceBeforeExpansion),
+		maxFailuresPerSource: pick("max_failures_per_source", FALLBACK_THRESHOLDS.maxFailuresPerSource),
+		maxFetchPerSearchRatio: pick("max_fetch_per_search_ratio", FALLBACK_THRESHOLDS.maxFetchPerSearchRatio),
+		softCallBudget: pick("soft_call_budget", FALLBACK_THRESHOLDS.softCallBudget),
+	};
+}
+
+/** One piece of advice, as Main reads it. */
+function renderAdvice(advice: Advice): string {
+	return [
+		"Sidecar review of your search in progress (unsolicited; you did not request it and cannot):",
+		`[${advice.action}] target: ${advice.target || "(none)"}`,
+		`  ${advice.instructions}`,
+		`  expected effect: ${advice.expectedEffect || "(not stated)"}`,
+		`  evidence: ${advice.evidenceIds.join(", ") || "(none cited)"}`,
+	].join("\n");
 }
 
 /**
@@ -376,10 +562,43 @@ async function writeReview(
  * episode.
  */
 const collectors = new Map<string, TraceCollector>();
+/**
+ * One answer pool per agent, for the same reason the collector is per agent.
+ *
+ * Per agent rather than per session is the whole point: the eval runner spawns a
+ * fresh agent per query inside one session precisely so query N cannot see query
+ * N-1's results (`experiments/eval-runner/run.mjs`). A session-scoped pool would
+ * collapse every query's answer into one, and each query's number would stop
+ * meaning anything (`docs/develop/plan.md` §3.2).
+ */
+const answerPools = new Map<string, AnswerPool>();
 const gates = new Map<string, AdviceGate>();
 const tracesUnderReview = new Map<string, PublicSearchTrace>();
-const reviewsRun = new Map<string, number>();
 const reviewerToSubject = new Map<string, string>();
+/**
+ * Subject -> its resident Reviewer, and the claim that stops a second one.
+ *
+ * Two maps rather than one because the claim has to be made **synchronously**,
+ * before the first `await`: `agent_spawned` broadcasts to the whole tree, so the
+ * same spawn can reach two activations, and both would otherwise get past a
+ * `has()` check on a map that is only filled after `spawnAgent` resolves.
+ */
+const subjectToReviewer = new Map<string, string>();
+const reviewerClaimed = new Set<string>();
+const thresholdsBySubject = new Map<string, DetectorThresholds>();
+/**
+ * Which detector conditions have already been delivered for a subject.
+ *
+ * A detector fires on the transition from "not holding" to "holding", once. That
+ * is what bounds the number of review rounds without capping observation
+ * (D-14): R1-R7 can each contribute at most one trigger.
+ */
+const firedConditions = new Map<string, Set<string>>();
+const reviewJournals = new Map<string, ReviewJournalEntry[]>();
+const deliveredAdvice = new Map<string, DeliveredAdvice[]>();
+/** Per-subject serialisation of deliveries; see `MAX_QUEUED_REVIEWS_PER_SUBJECT`. */
+const reviewChains = new Map<string, Promise<void>>();
+const reviewQueueDepth = new Map<string, number>();
 
 const extension: ExtensionDefinition = {
 	apiVersion: EXTENSION_API_VERSION,
@@ -394,18 +613,273 @@ const extension: ExtensionDefinition = {
 			return created;
 		};
 
+		const journalFor = (subjectAgentId: string): ReviewJournalEntry[] => {
+			const existing = reviewJournals.get(subjectAgentId);
+			if (existing) return existing;
+			const created: ReviewJournalEntry[] = [];
+			reviewJournals.set(subjectAgentId, created);
+			return created;
+		};
+
+		const note = (subjectAgentId: string, entry: Omit<ReviewJournalEntry, "at" | "atCall" | "atSearch">): void => {
+			const trace = collectors.get(subjectAgentId)?.snapshot();
+			journalFor(subjectAgentId).push({
+				at: new Date().toISOString(),
+				...(trace === undefined
+					? {}
+					: { atCall: trace.budget.totalCalls, atSearch: trace.budget.callsByTool.search_metadata ?? 0 }),
+				...entry,
+			});
+		};
+
+		/**
+		 * Attach a resident Reviewer to one search agent, once.
+		 *
+		 * The extension spawns it, not the Main Agent. That is what makes the
+		 * channel a bypass: `profiles/search.md` lists neither `spawn_agent` nor
+		 * `send_message`, so Main has no way to reach a Reviewer even if it wanted
+		 * one. "Main cannot ask for help" is a property of the tool set, not a rule
+		 * in a prompt (`docs/design.md` §3).
+		 *
+		 * Resident rather than one-per-checkpoint (D-10): $C^R_t$ carries a $t$
+		 * subscript, so a Reviewer that remembers having already raised diversity is
+		 * closer to the formalisation than one that starts from nothing each time and
+		 * relies on the gate's novelty key to deduplicate. It also makes the Reviewer
+		 * something the user can switch to in the agent strip and talk to, which is
+		 * where $NP_0$ seeds come from (`docs/reviewer-design.md` §3, §5.2b).
+		 */
+		async function ensureReviewer(subjectAgentId: string, context: ExtensionContext): Promise<string | undefined> {
+			if (!reviewerEnabled(process.env)) return undefined;
+			// Claimed synchronously, before any await: `agent_spawned` broadcasts to
+			// the tree, so two activations can reach this for the same subject.
+			if (reviewerClaimed.has(subjectAgentId)) return subjectToReviewer.get(subjectAgentId);
+			reviewerClaimed.add(subjectAgentId);
+
+			// Thresholds are $HP_k$ and the service is their author (D-15). One call
+			// per episode, and a failure degrades to the placeholders rather than
+			// leaving every detector comparing against nothing.
+			let thresholds = FALLBACK_THRESHOLDS;
+			try {
+				const reported = await clientFromEnv().getReviewConfig();
+				thresholds = thresholdsFrom(reported.thresholds);
+			} catch (error) {
+				note(subjectAgentId, {
+					trigger: "attach",
+					conditions: [],
+					delivered: false,
+					note:
+						"could not read the review thresholds from the Search Service, using the extension's " +
+						`placeholders: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			}
+			thresholdsBySubject.set(subjectAgentId, thresholds);
+
+			const reviewerModel = process.env[REVIEWER_MODEL_ENV_VAR]?.trim();
+			let reviewerId: string;
+			try {
+				reviewerId = await context.actions.spawnAgent({
+					origin: { kind: "new", profileId: REVIEWER_PROFILE_ID },
+					...(reviewerModel ? { model: reviewerModel } : {}),
+				});
+			} catch (error) {
+				// A Reviewer that could not start is a fact about the configuration, and
+				// it has to be recorded: an absent review file is indistinguishable from
+				// a review that ran and found nothing.
+				note(subjectAgentId, {
+					trigger: "attach",
+					conditions: [],
+					delivered: false,
+					note: `spawnAgent failed: ${error instanceof Error ? error.message : String(error)}`,
+				});
+				await writeReview(
+					subjectAgentId,
+					"(not spawned)",
+					undefined,
+					process.cwd(),
+					journalFor(subjectAgentId),
+					[],
+				);
+				return undefined;
+			}
+
+			reviewerToSubject.set(reviewerId, subjectAgentId);
+			subjectToReviewer.set(subjectAgentId, reviewerId);
+			gates.set(reviewerId, createAdviceGate());
+			note(subjectAgentId, { trigger: "attach", conditions: [], delivered: false, note: `reviewer ${reviewerId} attached` });
+			return reviewerId;
+		}
+
+		/**
+		 * Hand the current trace to the resident Reviewer.
+		 *
+		 * Serialised per subject because `prompt` refuses a busy target rather than
+		 * queueing, and a refused delivery would be indistinguishable from a trigger
+		 * that never fired (`docs/reviewer-design.md` §8). Beyond one in flight and
+		 * one waiting, the trigger is dropped **and journalled**.
+		 */
+		function scheduleReview(
+			subjectAgentId: string,
+			reviewerId: string,
+			trigger: "answer_pool" | "detector",
+			conditions: readonly DetectedCondition[],
+			context: ExtensionContext,
+		): void {
+			const depth = reviewQueueDepth.get(subjectAgentId) ?? 0;
+			if (depth >= MAX_QUEUED_REVIEWS_PER_SUBJECT) {
+				note(subjectAgentId, {
+					trigger,
+					conditions: conditions.map((condition) => condition.id),
+					delivered: false,
+					note: `dropped: ${depth} review(s) already in flight or queued for this subject`,
+				});
+				return;
+			}
+			reviewQueueDepth.set(subjectAgentId, depth + 1);
+			const previous = reviewChains.get(subjectAgentId) ?? Promise.resolve();
+			const next = previous
+				.then(() => deliverReview(subjectAgentId, reviewerId, trigger, conditions, context))
+				.catch(() => {
+					// A failed delivery is already journalled inside `deliverReview`.
+				})
+				.finally(() => {
+					reviewQueueDepth.set(subjectAgentId, Math.max(0, (reviewQueueDepth.get(subjectAgentId) ?? 1) - 1));
+				});
+			reviewChains.set(subjectAgentId, next);
+		}
+
+		async function deliverReview(
+			subjectAgentId: string,
+			reviewerId: string,
+			trigger: "answer_pool" | "detector",
+			conditions: readonly DetectedCondition[],
+			context: ExtensionContext,
+		): Promise<void> {
+			const collector = collectors.get(subjectAgentId);
+			if (!collector) return;
+			// Snapshotted here rather than at trigger time: a queued delivery should
+			// carry the trace as it is when it goes out, not as it was when queued.
+			const trace = collector.snapshot();
+			tracesUnderReview.set(reviewerId, trace);
+
+			let outcome: unknown;
+			try {
+				outcome = await context.actions.prompt(
+					`${renderTraceForReviewer(trace, { conditions })}\n\n` +
+						"This search is still running. Advise on anything that should change while it still can - " +
+						"call provide_advice for each point, citing evidence ids from the trace above, or a single " +
+						"`stop` if the search looks sound. Each accepted piece is delivered to the searching agent " +
+						"immediately, so send one point at a time rather than a summary. Do not answer in prose alone: " +
+						"a verdict not recorded through the tool is not part of the trajectory and cannot be attributed.",
+					// Rendered as a human turn rather than as an extension notice. The
+					// label is provenance only, but it decides how the message reaches
+					// the model, and an extension-labelled message left this model
+					// answering with empty content: a conversation whose last turn is
+					// not a user turn is not one it replies to.
+					{ target: reviewerId, source: { kind: "human", label: "public search trace" } },
+				);
+				note(subjectAgentId, {
+					trigger,
+					conditions: conditions.map((condition) => condition.id),
+					delivered: true,
+					note: summariseOutcome(outcome).slice(0, 600),
+				});
+			} catch (error) {
+				// A Reviewer that failed to answer is a missing review, not a failure of
+				// the search it was reviewing. Recorded either way.
+				note(subjectAgentId, {
+					trigger,
+					conditions: conditions.map((condition) => condition.id),
+					delivered: false,
+					note: `prompt failed: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			}
+
+			await writeReview(
+				subjectAgentId,
+				reviewerId,
+				gates.get(reviewerId),
+				process.cwd(),
+				journalFor(subjectAgentId),
+				deliveredAdvice.get(subjectAgentId) ?? [],
+			);
+		}
+
+		/**
+		 * Trigger source two: the detectors, re-run after every tool call.
+		 *
+		 * A condition delivers once, on the transition from not holding to holding.
+		 * That is what keeps the number of rounds finite without capping observation
+		 * (D-14), and it is why the gate's novelty key still matters: the same
+		 * condition seen again is stopped here, and a Reviewer repeating itself about
+		 * a different condition is stopped there.
+		 */
+		function reviewOnDetectors(subjectAgentId: string, context: ExtensionContext): void {
+			const reviewerId = subjectToReviewer.get(subjectAgentId);
+			if (reviewerId === undefined) return;
+			const collector = collectors.get(subjectAgentId);
+			if (!collector) return;
+			const trace = collector.snapshot();
+			if (trace.calls.length === 0) return;
+			const conditions = detectConditions(trace, thresholdsBySubject.get(subjectAgentId) ?? FALLBACK_THRESHOLDS);
+			const seen = firedConditions.get(subjectAgentId) ?? new Set<string>();
+			firedConditions.set(subjectAgentId, seen);
+			const fresh = conditions.filter((condition) => !seen.has(condition.id));
+			if (fresh.length === 0) return;
+			for (const condition of fresh) seen.add(condition.id);
+			scheduleReview(subjectAgentId, reviewerId, "detector", fresh, context);
+		}
+
+		/**
+		 * Trigger source one: the answer pool changed (D-11).
+		 *
+		 * Kept alongside the detectors rather than instead of them. If the pool were
+		 * the only source, Main would indirectly control the intervention rate -
+		 * never write to the pool, never be reviewed - and $\Delta_{\mathrm{sidecar}}$
+		 * would become endogenous again, which is exactly what `mapping.md` §3.4
+		 * rejected. The detectors are the floor.
+		 */
+		function reviewOnAnswerPool(subjectAgentId: string, context: ExtensionContext): void {
+			const reviewerId = subjectToReviewer.get(subjectAgentId);
+			if (reviewerId === undefined) return;
+			const trace = collectors.get(subjectAgentId)?.snapshot();
+			const conditions =
+				trace === undefined
+					? []
+					: detectConditions(trace, thresholdsBySubject.get(subjectAgentId) ?? FALLBACK_THRESHOLDS);
+			scheduleReview(subjectAgentId, reviewerId, "answer_pool", conditions, context);
+		}
+
 		// $\bar{\tau}_t$ is built by filtering this stream, never by transcribing it.
 		// `core/trajectory.ts` holds the allow-list; the handler only routes.
-		api.observe("agent_harness_event", (event) => {
+		api.observe("agent_harness_event", async (event, context) => {
 			collectorFor(event.agentId).record(event.event);
+			// A Reviewer only ever watches a search agent, and never itself.
+			if (api.profileId !== SUBJECT_PROFILE_ID) return;
+			const inner = event.event as { type?: unknown; toolName?: unknown };
+			if (inner?.type !== "tool_execution_end") return;
+			// Second entry point for attaching. `agent_spawned` broadcasts to the tree,
+			// but nothing guarantees it reaches an activation that can act on it - the
+			// subject may be the tree root, spawned before this extension activated.
+			// Both paths run the same idempotent claim, so whichever arrives first wins.
+			await ensureReviewer(event.agentId, context);
+			if (inner.toolName === "update_answer_pool") reviewOnAnswerPool(event.agentId, context);
+			reviewOnDetectors(event.agentId, context);
 		});
 
-		// The Reviewer channel's state. Keyed by the agent under review, because
-		// $C^R_t \neq C^M_t$ has to hold per episode, not per process.
+		// A search agent is created; give it a Reviewer. Stateless in the ordering
+		// sense: the condition is the profile id, not a table this handler filled in
+		// earlier, so an event arriving out of order cannot defeat it. Recursion is
+		// blocked by the same condition - a Reviewer's own spawn has profile id
+		// `reviewer` (`docs/reviewer-design.md` §5.2b).
+		api.observe("agent_spawned", async (event, context) => {
+			if (event.profile.id !== SUBJECT_PROFILE_ID) return;
+			await ensureReviewer(event.agentId, context);
+		});
 
 		// An idle agent has finished its turn, which is when the trace is worth
-		// publishing. Emitted on the bus, written to disk for a human to check, and
-		// - if the sidecar is on - handed to a Reviewer.
+		// publishing. It is **not** when a review is worth running: a review at idle
+		// arrives after the final answer and cannot change the search it reviewed,
+		// which is precisely the gap G-1 records.
 		api.observe("agent_idle", async (event, context) => {
 			const collector = collectors.get(event.agentId);
 			if (!collector) return;
@@ -417,99 +891,28 @@ const extension: ExtensionDefinition = {
 			} catch {
 				// A bus with no listener is the normal case; the trace is still on disk.
 			}
-
-			if (!reviewerEnabled(process.env)) return;
-			// Never review a Reviewer, or the channel reviews itself forever.
-			if (reviewerToSubject.has(event.agentId)) return;
-			if ((reviewsRun.get(event.agentId) ?? 0) >= MAX_REVIEWS_PER_AGENT) return;
-			reviewsRun.set(event.agentId, (reviewsRun.get(event.agentId) ?? 0) + 1);
-			await runReview(event.agentId, trace, context);
 		});
 
-		/**
-		 * Spawn a Reviewer and hand it the trace.
-		 *
-		 * The extension spawns it, not the Main Agent. That is what makes the
-		 * channel a bypass: `profiles/search.md` lists neither `spawn_agent` nor
-		 * `send_message`, so Main has no way to reach a Reviewer even if it wanted
-		 * one. "Main cannot ask for help" is a property of the tool set, not a rule
-		 * in a prompt (`docs/design.md` §3).
-		 */
-		async function runReview(
-			subjectAgentId: string,
-			trace: PublicSearchTrace,
-			context: ExtensionContext,
-		): Promise<void> {
-			const reviewerModel = process.env[REVIEWER_MODEL_ENV_VAR]?.trim();
-			let reviewerId: string;
+		// The Reviewer's lifetime is the episode, not the session. The eval runner
+		// spawns a fresh Main per query, and a Reviewer surviving across queries would
+		// carry query N-1's trace into query N - breaking the isolation that runner
+		// exists to preserve (`docs/reviewer-design.md` §5.2b, third constraint).
+		api.observe("agent_disposed", async (event, context) => {
+			const reviewerId = subjectToReviewer.get(event.agentId);
+			if (reviewerId === undefined) return;
+			subjectToReviewer.delete(event.agentId);
+			reviewerToSubject.delete(reviewerId);
+			tracesUnderReview.delete(reviewerId);
 			try {
-				reviewerId = await context.actions.spawnAgent({
-					origin: { kind: "new", profileId: REVIEWER_PROFILE_ID },
-					...(reviewerModel ? { model: reviewerModel } : {}),
+				await context.actions.disposeAgent(reviewerId, {
+					scope: "agent",
+					reason: "the search it reviewed was disposed",
 				});
-			} catch (error) {
-				// A review that could not start is a fact about the configuration, and
-				// it has to be recorded: an absent review file is indistinguishable
-				// from a review that ran and found nothing.
-				await writeReview(subjectAgentId, "(not spawned)", createAdviceGate(), process.cwd(), {
-					failed: `spawnAgent failed: ${error instanceof Error ? error.message : String(error)}`,
-				});
-				return;
+			} catch {
+				// A Reviewer that outlives its subject is untidy, not incorrect: it has
+				// no trace to review and no subject to advise.
 			}
-
-			reviewerToSubject.set(reviewerId, subjectAgentId);
-			tracesUnderReview.set(reviewerId, trace);
-			gates.set(reviewerId, createAdviceGate());
-
-			let outcome: unknown;
-			try {
-				outcome = await context.actions.prompt(
-					`${renderTraceForReviewer(trace)}\n\n` +
-						"Review this search. Record your verdict by calling provide_advice at least once: use an " +
-						"actionable action for anything that should change, citing evidence ids from the trace above, " +
-						"or a single `stop` if the search looks sound. Do not answer in prose alone - a verdict that " +
-						"is not recorded through the tool is not part of the trajectory and cannot be attributed.",
-					// Rendered as a human turn rather than as an extension notice. The
-					// label is provenance only, but it decides how the message reaches
-					// the model, and an extension-labelled message left this model
-					// answering with empty content: a conversation whose last turn is
-					// not a user turn is not one it replies to.
-					{ target: reviewerId, source: { kind: "human", label: "public search trace" } },
-				);
-			} catch (error) {
-				// A Reviewer that failed to answer is a missing review, not a failure
-				// of the search it was reviewing.
-				outcome = { failed: error instanceof Error ? error.message : String(error) };
-			}
-
-			const gate = gates.get(reviewerId);
-			const admitted = gate?.admitted() ?? [];
-			if (admitted.length > 0) {
-				const advice = admitted
-					.map(
-						(item, index) =>
-							`${index + 1}. [${item.action}] target: ${item.target || "(none)"}\n` +
-							`   ${item.instructions}\n` +
-							`   expected effect: ${item.expectedEffect || "(not stated)"}\n` +
-							`   evidence: ${item.evidenceIds.join(", ") || "(none cited)"}`,
-					)
-					.join("\n");
-				try {
-					// `precede`, not `prompt` or `followUp`: advice is context for work
-					// not yet started. Waking the agent here would make it go idle again,
-					// which would trigger another review.
-					await context.actions.precede(
-						`Sidecar review of your search (unsolicited; you did not request it and cannot):\n${advice}`,
-						{ target: subjectAgentId },
-					);
-				} catch {
-					// Delivery failing leaves the advice in the trajectory, which is
-					// where the attribution analysis reads it from anyway.
-				}
-			}
-
-			await writeReview(subjectAgentId, reviewerId, gate, process.cwd(), outcome);
-		}
+		});
 
 		api.registerTool({
 			name: "provide_advice",
@@ -563,10 +966,55 @@ const extension: ExtensionDefinition = {
 					const text = `Advice refused (${result.refusal}): ${result.reason}`;
 					return { content: [{ type: "text", text }], details: { admitted: false, refusal: result.refusal } };
 				}
+				// Delivered here, one piece per message, at the moment it is admitted.
+				//
+				// The alternative - collecting `gate.admitted()` and pushing the whole
+				// list at the end of each review - is what the previous implementation
+				// did, and it was safe only because each Reviewer was new and so was its
+				// gate. With one resident gate per episode, `admitted()` is cumulative:
+				// the third checkpoint would re-deliver the first two pieces, the sixth
+				// would deliver six. Main's observed response to repeated content is to
+				// restate it rather than act on it (`docs/reviewer-design.md` §2.3,
+				// §5.2d), so re-delivery is not merely wasteful.
+				//
+				// `precede`, not `prompt` or `followUp`: advice is context for work not
+				// yet started, and alone among the four it can never be refused or
+				// deferred - so this direction has none of the busy-target problem the
+				// extension -> Reviewer direction has.
+				const advice = result.advice;
+				const subjectAgentId = reviewerToSubject.get(reviewerId ?? "");
+				let deliveryNote = "";
+				if (advice !== undefined && subjectAgentId !== undefined) {
+					const actions = context.extension?.host?.actions;
+					if (actions === undefined) {
+						deliveryNote = " It could not be delivered: this runtime gave the tool no action surface.";
+					} else {
+						try {
+							await actions.precede(renderAdvice(advice), { target: subjectAgentId });
+							const delivered = deliveredAdvice.get(subjectAgentId) ?? [];
+							const at = collectors.get(subjectAgentId)?.snapshot();
+							delivered.push({
+								advice,
+								atCall: at?.budget.totalCalls ?? -1,
+								atSearch: at?.budget.callsByTool.search_metadata ?? -1,
+							});
+							deliveredAdvice.set(subjectAgentId, delivered);
+							deliveryNote = " It has been delivered to the searching agent, which will read it on its next turn.";
+						} catch (error) {
+							// Delivery failing leaves the advice in the gate's admitted list,
+							// and the difference between admitted and delivered is the only
+							// record that it happened.
+							deliveryNote = ` It could not be delivered: ${error instanceof Error ? error.message : String(error)}`;
+						}
+					}
+				}
 				const text =
-					`Advice accepted (${result.advice?.action}). ` +
-					`${gate.admitted().length} of the episode's advice budget used.`;
-				return { content: [{ type: "text", text }], details: { admitted: true, advice: result.advice } };
+					`Advice accepted (${advice?.action}). ` +
+					`${gate.admitted().length} of the episode's advice budget used.${deliveryNote}`;
+				return {
+					content: [{ type: "text", text }],
+					details: { admitted: true, advice, delivered: deliveryNote.includes("has been delivered") },
+				};
 			},
 		});
 
@@ -712,7 +1160,14 @@ const extension: ExtensionDefinition = {
 			parameters: {
 				type: "object",
 				properties: {
-					query: { type: "string", description: "The main query, as a natural-language statement of what is sought." },
+					query: {
+						type: "string",
+						description:
+							"The main query. Terms are combined with AND, so every term must appear: send the concepts that " +
+							"define the paper you want, not a sentence. Wrap a multi-word term in double quotes to keep it a " +
+							'phrase, e.g. \'"active learning" "semantic segmentation" superpixel\'. More terms means narrower; ' +
+							"send a second phrasing through `subqueries` rather than piling terms into one query.",
+					},
 					subqueries: {
 						type: "array",
 						items: { type: "string" },
@@ -748,8 +1203,12 @@ const extension: ExtensionDefinition = {
 						type: "string",
 						enum: ["off", "auto", "l3a", "l3b", "l3c"],
 						description:
-							"How much relevance judging to spend on the candidates. " +
-							"This service build implements no judge, so anything but 'off' is reported back as unsupported rather than silently ignored.",
+							"How much relevance judging to spend on the candidates. `l3b` grades each candidate " +
+							"against criteria derived from the query and re-orders by the result; `off` returns recall " +
+							"order. Judging costs a model call per candidate, so buy it when the candidate set is " +
+							"large enough that ordering matters. Tiers this service does not implement are reported " +
+							"back as unsupported rather than silently ignored, and the answer always says how many " +
+							"candidates were actually judged.",
 					},
 				},
 				required: ["query"],
@@ -779,6 +1238,7 @@ const extension: ExtensionDefinition = {
 							topK: input.top_k,
 							endDate: input.end_date,
 							sources: input.sources,
+							judgeLevel: input.judge_level,
 						},
 						{ signal: context.signal ?? undefined },
 					);
@@ -788,12 +1248,23 @@ const extension: ExtensionDefinition = {
 				}
 
 				// Unsupported knobs are reported, never dropped in silence: an agent
-				// that thinks it bought judging would misread the candidate list.
+				// that thinks it bought judging would misread the candidate list. What
+				// is reported now comes from the service's own account rather than from
+				// a constant here, so the message cannot go stale against the build.
+				const judge = result.searchState.judge;
 				const notes: string[] = [];
-				if (input.judge_level !== undefined && input.judge_level !== "off") {
+				if (judge.judged > 0) {
 					notes.push(
-						`judge_level='${input.judge_level}' was requested but this Search Service build implements no ` +
-							"relevance judge, so the candidates below are unjudged. Treat the ranking as recall order, not relevance.",
+						`Judged ${judge.judged} of ${judge.considered} candidate(s) at ${judge.level} ` +
+							`(rubric ${judge.rubricVersion ?? "?"}, criteria ${judge.criteriaVersion ?? "?"}, ` +
+							`model ${judge.modelVersion ?? "?"}; ${judge.cacheHits} from cache). ` +
+							"The order below is relevance order for the judged papers, and recall order after them.",
+					);
+				} else if (judge.requestedLevel !== "off") {
+					notes.push(
+						`judge_level='${judge.requestedLevel}' was requested and nothing was judged` +
+							`${judge.level === judge.requestedLevel ? "" : ` (the service ran '${judge.level}')`}. ` +
+							"Treat the ranking as recall order, not relevance; the failures above say why.",
 					);
 				}
 				if (input.intent !== undefined) {
@@ -823,8 +1294,10 @@ const extension: ExtensionDefinition = {
 						query: input.query,
 						subqueries: input.subqueries ?? [],
 						intent: input.intent ?? null,
-						judgeLevel: input.judge_level ?? "off",
-						judgeSupported: false,
+						judgeLevel: judge.level,
+						judgeRequestedLevel: judge.requestedLevel,
+						judgeSupported: judge.supported,
+						judgeAccount: judge,
 						papers: result.papers,
 						searchState: result.searchState,
 						elapsedMs: result.elapsedMs,
@@ -1040,8 +1513,17 @@ const extension: ExtensionDefinition = {
 					);
 				}
 				if (result.papers.length === 0) {
+					// A rejected identifier and an empty graph are different facts, and
+					// the old unconditional wording reported the first as the second -
+					// which is what made the agent abandon citation expansion entirely
+					// (`docs/develop/backlog.md` F-10).
+					const badIds = result.failures.filter((failure) => failure.errorType === "bad_id");
 					lines.push(
-						"No papers reached. Either the seeds have no edges in this direction, or no source could serve them.",
+						badIds.length > 0
+							? `No papers reached, and ${badIds.length} seed(s) were rejected as identifiers rather than searched. ` +
+									"Fix those ids and call again; this is not a statement about the citation graph."
+							: "No papers reached. The seeds were accepted as identifiers, so either they have no edges in " +
+									"this direction or no enabled source holds them.",
 					);
 				} else {
 					const shown = result.papers.slice(0, MAX_LISTED_PAPERS);
@@ -1249,6 +1731,192 @@ const extension: ExtensionDefinition = {
 				let text = lines.join("\n");
 				if (text.length > MAX_OUTPUT_CHARS) text = `${text.slice(0, MAX_OUTPUT_CHARS)}\n[truncated]`;
 				return { content: [{ type: "text", text }], details: { baseUrl: client.baseUrl, ...result } };
+			},
+		});
+
+		/**
+		 * The pool for the agent this activation belongs to.
+		 *
+		 * An extension activates once per agent, so `api.agentId` is the episode's
+		 * identity - the same reasoning that moved the collector map to module scope.
+		 */
+		const poolFor = (agentId: string): AnswerPool => {
+			const existing = answerPools.get(agentId);
+			if (existing) return existing;
+			const created = createAnswerPool({ agentId, now: () => new Date().toISOString() });
+			answerPools.set(agentId, created);
+			return created;
+		};
+
+		api.registerTool({
+			name: "update_answer_pool",
+			label: "Update Answer Pool",
+			description:
+				"Record which papers answer the question, incrementally. This is where your answer lives: the " +
+				"evaluation reads this pool and nothing else, so a paper you only mention in prose does not count, " +
+				"and an episode that ends with an empty pool has produced no answer at all. " +
+				"Add a paper as soon as you are satisfied it belongs, with `why` saying what it contributes - the " +
+				"`why` fields are what carry the structure of your answer. Withdraw a paper when you change your " +
+				"mind; `reason` is required, and a withdrawal with its reason is a more useful record than a quiet " +
+				"deletion. Adding the same paper twice updates its `why` rather than duplicating it, and identifiers " +
+				"from different sources for one paper resolve to one entry. Call it repeatedly; do not batch it to " +
+				"the end of the episode.",
+			parameters: {
+				type: "object",
+				properties: {
+					add: {
+						type: "array",
+						maxItems: 25,
+						items: {
+							type: "object",
+							properties: {
+								paper_id: {
+									type: "string",
+									description: "The paper's identifier: a search result `id`, a DOI, an arXiv id or an OpenAlex id.",
+								},
+								why: {
+									type: "string",
+									description:
+										"What this paper contributes to the answer - the method, the direction, the claim it settles. " +
+										"Not a restatement of the title.",
+								},
+							},
+							required: ["paper_id", "why"],
+						},
+						description: "Papers to commit to.",
+					},
+					remove: {
+						type: "array",
+						maxItems: 25,
+						items: {
+							type: "object",
+							properties: {
+								paper_id: { type: "string", description: "The identifier you used when you added it." },
+								reason: {
+									type: "string",
+									description: "Why it does not belong after all. Required - an unexplained withdrawal is unusable.",
+								},
+							},
+							required: ["paper_id", "reason"],
+						},
+						description: "Papers to withdraw.",
+					},
+					note: {
+						type: "string",
+						description:
+							"A note about the pool as a whole: what it covers, what it is still missing. Replaces the previous note.",
+					},
+				},
+			},
+			async execute(toolCallId, params, context) {
+				context.signal?.throwIfAborted();
+				const agentId = context.extension?.host?.agentId;
+				if (agentId === undefined) {
+					throw new Error("update_answer_pool needs to know which agent it is recording for; the host reported none.");
+				}
+				const input = readParams<{
+					add?: { paper_id?: unknown; why?: unknown }[];
+					remove?: { paper_id?: unknown; reason?: unknown }[];
+					note?: unknown;
+				}>(params);
+				const additions = Array.isArray(input.add) ? input.add : [];
+				const removals = Array.isArray(input.remove) ? input.remove : [];
+				const note = typeof input.note === "string" ? input.note.trim() : "";
+				if (additions.length === 0 && removals.length === 0 && note === "") {
+					throw new Error(
+						"update_answer_pool needs at least one of `add`, `remove` or `note`. " +
+							"To read the pool back without changing it, pass a `note` restating what you believe it covers.",
+					);
+				}
+
+				const pool = poolFor(agentId);
+				const client = clientFromEnv();
+				const lines: string[] = [];
+
+				for (const removal of removals) {
+					const identifier = typeof removal?.paper_id === "string" ? removal.paper_id.trim() : "";
+					const reason = typeof removal?.reason === "string" ? removal.reason.trim() : "";
+					if (identifier === "" || reason === "") {
+						lines.push(`  ! withdrawal skipped: both paper_id and reason are required (got '${identifier}').`);
+						continue;
+					}
+					const result = pool.remove(identifier, reason, toolCallId);
+					lines.push(
+						result.outcome === "removed"
+							? `  - withdrawn ${result.canonicalId}: ${reason}`
+							: `  ! '${identifier}' is not in the pool, so there was nothing to withdraw.`,
+					);
+				}
+
+				for (const addition of additions) {
+					const identifier = typeof addition?.paper_id === "string" ? addition.paper_id.trim() : "";
+					const why = typeof addition?.why === "string" ? addition.why.trim() : "";
+					if (identifier === "" || why === "") {
+						lines.push(`  ! addition skipped: both paper_id and why are required (got '${identifier}').`);
+						continue;
+					}
+					// Resolved through the service, which is the only holder of the
+					// identity rule and which returns the bibliographic fields the entry
+					// needs anyway - so the extra call is not extra work (D-13).
+					let looked: Awaited<ReturnType<ServiceClient["getPaper"]>> | undefined;
+					try {
+						looked = await client.getPaper(identifier, { signal: context.signal ?? undefined });
+					} catch (error) {
+						if (!(error instanceof ServiceRequestError)) throw error;
+						// A paper the service cannot resolve is still the agent's answer;
+						// refusing it would lose a real result over a thin record. It goes in
+						// under the identifier as given, and the record says so.
+						lines.push(
+							`  ~ ${identifier} could not be resolved by the service (${error.detail ?? error.message}); ` +
+								"committed under the identifier as given, without normalised identity.",
+						);
+					}
+					const paper = looked?.paper;
+					const result = pool.add(
+						paper === undefined
+							? { canonicalId: null, paperId: identifier }
+							: {
+									canonicalId: paper.canonicalId,
+									paperId: identifier,
+									arxivId: paper.arxivId,
+									doi: paper.doi,
+									openalexId: paper.openalexId,
+									title: paper.title,
+									authors: paper.authors,
+									year: paper.year,
+									venue: paper.venue,
+									url: paper.url,
+								},
+						why,
+						toolCallId,
+					);
+					lines.push(
+						result.outcome === "added"
+							? `  + ${result.entry.canonicalId} :: ${result.entry.title || "(no title)"}`
+							: `  = ${result.entry.canonicalId} was already committed; its 'why' is updated.`,
+					);
+				}
+
+				if (note !== "") pool.setNote(note);
+
+				const snapshot = pool.snapshot();
+				// `process.cwd()`, matching `writeTrace`: the pool and the trace must land
+				// in one directory or the scorer finds half of an episode.
+				const path = await writeAnswerPool(snapshot, process.cwd());
+				if (path === undefined) {
+					throw new Error(
+						"The answer pool could not be written to disk. The evaluation reads that file, so the change " +
+							"you just made would not be part of your answer. Check the trace directory is writable.",
+					);
+				}
+
+				const text = [renderPoolSummary(snapshot), ...(lines.length > 0 ? ["", "this call:", ...lines] : [])].join("\n");
+				return {
+					content: [{ type: "text", text: truncate(text, MAX_OUTPUT_CHARS) }],
+					// `pool` in the details is what the trajectory harvests, which is how a
+					// Reviewer sees the pool's current content without a tool of its own.
+					details: { baseUrl: client.baseUrl, pool: snapshot, path },
+				};
 			},
 		});
 

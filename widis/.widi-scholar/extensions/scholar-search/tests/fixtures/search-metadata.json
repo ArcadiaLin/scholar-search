@@ -74,7 +74,8 @@
       "raw": null,
       "score": 0.03278688524590164,
       "rank": 1,
-      "tier": "partially_relevant"
+      "tier": "partially_relevant",
+      "canonical_id": "arxiv:1706.03762"
     }
   ],
   "search_state": {
@@ -83,6 +84,7 @@
         "provider": "arxiv",
         "mode": "aggregated",
         "query": "transformer attention",
+        "native_query": "all:transformer AND all:attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -91,6 +93,7 @@
         "provider": "arxiv",
         "mode": "aggregated",
         "query": "self-attention",
+        "native_query": "all:self-attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -99,6 +102,7 @@
         "provider": "openalex",
         "mode": "aggregated",
         "query": "transformer attention",
+        "native_query": "search=transformer attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -107,6 +111,7 @@
         "provider": "openalex",
         "mode": "aggregated",
         "query": "self-attention",
+        "native_query": "search=self-attention",
         "raw": null,
         "cost_usd": null,
         "latency_ms": 0
@@ -125,7 +130,18 @@
       "recalled": 2,
       "returned": 1
     },
-    "failures": []
+    "failures": [],
+    "judge": {
+      "level": "off",
+      "requested_level": "off",
+      "supported": true,
+      "considered": 0,
+      "judged": 0,
+      "cache_hits": 0,
+      "rubric_version": null,
+      "criteria_version": null,
+      "model_version": null
+    }
   },
   "provenance": {
     "per_paper_sources": {

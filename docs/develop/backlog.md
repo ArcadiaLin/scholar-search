@@ -8,8 +8,8 @@
 
 | | 是什么 | 编号 | 位置 |
 | --- | --- | --- | --- |
-| **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-11` | 前半篇 |
-| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-5` | 后半篇 |
+| **检索缺陷** | 已落地的部分**本身有缺陷** | `F-1`..`F-13` | 前半篇 |
+| **验收缺口** | stage 验收通过，但**设计要求尚未满足** | `G-1`..`G-10` | 后半篇 |
 
 编号避开已被占用的 `D-`（决策，见 `decisions.md`）、`U-`（上游缺陷）、
 `SV-`（Service 缺陷）、`E-`（环境）——后三类在 `history.md`。
@@ -92,8 +92,8 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 
 | # | 一句话 | 状态 | 阻塞什么 |
 | --- | --- | --- | --- |
-| **F-1** | arXiv 查询退化成 OR，召回层从根上失效 | 未修 | **一切**。S10 的前置 |
-| **F-2** | 全部 provider 失败时，失败原因被丢弃 | 未修 | S10 的前置；R5 检测器 |
+| **F-1** | arXiv 查询退化成 OR，召回层从根上失效 | **已修** | **一切**。S10 的前置 |
+| **F-2** | 全部 provider 失败时，失败原因被丢弃 | **已修** | S10 的前置；R5 检测器 |
 | F-3 | OpenAlex 改信用计费，`rate_limit_rps` 对它无效 | 部分修（见 F-8） | 预算维度 |
 | F-4 | `call_ledger` 只数次数，不算成本、不对配额 | 未修 | "预算接近上限" checkpoint；R7 检测器 |
 | F-5 | `end_date` 从未被使用，而评测协议依赖它 | 未修 | 评测的时间窗正确性 |
@@ -101,14 +101,24 @@ L0 召回层本身在漏掉正确答案，上面几层再怎么调都是在给�
 | F-7 | 四条较小但确凿的问题（a–d） | 未修 | — |
 | F-8 | `.env` 按进程 cwd 解析，凭据从未被读到 | **已修** | — |
 | F-9 | LLM provider 的凭据走 `os.environ`，同样读不到 `.env` | 未修（潜伏） | 换 provider 时会咬人 |
-| **F-10** | `expand_citations` 不接受其他工具产出的 id | 未修 | **S11 的 R4 检测器**；E 轴 |
+| **F-10** | `expand_citations` 不接受其他工具产出的 id | **已修** | **S11 的 R4 检测器**；E 轴 |
 | F-11 | OpenAlex 的 ML 预印本引文图稀疏，backward 扩展不可用 | **不可修**（数据现实） | E 轴的默认方向 |
+| **F-12** | 查询里的 `?` 让 OpenAlex 直接 400 | 未修 | 任何绕过 agent 的批量评测 |
+| **F-13** | AND 连接对整句自然语言查询过严（实测 0 条） | 未修 | 同上；J 轴消融已改用夹具查询 |
 
-加粗的三条是 S10 的前置修复，见 `plan.md` §2。
+F-1 / F-2 / F-10 是 S10 的前置修复，已修，见 `plan.md` §2 与 `worklog.md` §4。
+F-12 / F-13 是 S12 期间实测到的两条新缺陷：它们只在**绕过 agent** 的路径上发作
+（agent 送的是词项式查询），但那条路径正是批量评测走的，所以它们阻塞的是评测而不是产品。
 
 ---
 
-## F-1 — arXiv 查询退化成 OR，召回层从根上失效
+## F-1 — arXiv 查询退化成 OR，召回层从根上失效（已修）
+
+**修复**（2026-08-21）：`plugins/arxiv.py` 的 `build_search_query()` 按 AND 连接词项，
+短语保留、字段前缀与裸布尔算子透出；`SearchState.issued_queries[].native_query`
+记录实际发出的串；回归断言在 `tests/test_arxiv_query.py`，其中对 arXiv 回显
+`<title>` 不含 ` OR ` 的那条标 `network`（默认不跑，`pytest -m network` 跑）。
+0/4 → 4/4 的复跑记录在 `worklog.md` §4。原文保留在下。
 
 **现象**：会话中每一次 arXiv 检索返回的都是"含有若干常见词"的杂烩。
 最刺眼的一次是精确标题检索：
@@ -163,7 +173,13 @@ MetaBox+ 和 ViewAL 在会话末尾能被标题查询命中，是因为标题里
 
 ---
 
-## F-2 — 全部 provider 失败时，失败原因被丢弃
+## F-2 — 全部 provider 失败时，失败原因被丢弃（已修）
+
+**修复**（2026-08-21）：`AggregationError` 带上 `failures` 与 `alternative_sources`
+（服务端算出来的"还没试过且具备该能力的源"），`POST /search` 的 502 体原样透出这两项；
+extension 侧 `describeUpstreamFailure()` 取代那句无条件文案，全部失败都是限流时
+另加一句"重试同一个调用不可能成功"。第 2 点（`Retry-After` 上传）属于 F-3，未做。
+原文保留在下。
 
 **现象**：同一类失败，agent 看到的信息量完全不同。
 
@@ -490,7 +506,15 @@ Service 侧要用 LLM 的地方不止判别器——还有 L3a 的 cross-encoder
 
 ---
 
-## F-10 — `expand_citations` 不接受其他工具产出的 id（未修）
+## F-10 — `expand_citations` 不接受其他工具产出的 id（已修）
+
+**修复**（2026-08-21）：新增 `search_service/identifiers.py` 作为唯一的 id 解析处，
+`api/paper.py` 的三条本地正则改成调它，OpenAlex 的 `works/` 寻址一律经
+`openalex_address()`（DOI → `doi:<doi>`，arXiv id → `doi:10.48550/arXiv.<id>`，
+两种形式都实测是 $0 的单篇查找）；`filter=cites:` 前先把种子解析成 `W` id。
+无法解析的种子记成 `bad_id` 并说明接受哪些形式，全部种子都坏时返回 400 而不是空图。
+契约测试在 `tests/test_identifier_contract.py`，包括"把 `/search` 给出的 id
+直接喂给 `/expand/citations`"这一条。原文保留在下。
 
 **现象**：2026-08-21 的 `search-k9u1` 会话里，两次 `expand_citations` 都因为
 种子 id 格式失败，agent 随后**放弃了引文扩展这条路**。
@@ -535,6 +559,59 @@ E 轴（引文扩展）在当前实现下没有测量对象。
 3. 回归测试：拿 `search_metadata` 的输出直接喂给 `expand_citations`，
    断言不出现 `[http] ... is not a valid OpenAlex ID`。
    **工具 A 的输出必须是工具 B 的合法输入**，这条该成为工具集的通用契约。
+
+## F-12 — 查询里的 `?` 让 OpenAlex 直接 400（未修）
+
+**现象**：把 AutoScholarQuery 的问句原样作为 `query` 发给 `/search/metadata`，
+OpenAlex 侧整条失败。
+
+**证据**（2026-08-21，S12 的 J 轴消融第一次跑，`runs/judge-ablation/accept`）：
+
+```
+openalex [http] query 'Could you provide me some works employs image patches and
+superpixels in region-based methods for semantic segmentation?':
+OpenAlex client error 400: {"error":"Invalid query parameters error.",
+ "message":"Wildcards (* or ?) require exact (no-stem) search. ... Use the
+ search.exact= parameter instead ..."}
+```
+
+**根因**：OpenAlex 把 `?` 当通配符。问句末尾的问号于是让整个 `search=` 参数
+变成一个非法的通配查询。`plugins/openalex.py` 的 `build_base_params` 把
+调用方的 query 原样放进 `search`，不做任何字符归一。
+
+**后果**：任何以自然问句结尾的查询在 OpenAlex 上是 100% 失败，而不是"结果差"。
+这在 agent 路径上被掩盖了——agent 送的是词项式查询，不带问号；
+只有直接把数据集问句喂给 Service 时才暴露。**这也意味着任何绕过 agent 的
+批量评测（包括 J 轴消融）都会先撞上它。**
+
+**补上它需要**：`search` 参数里的 `?` 与 `*` 做转义或剔除（OpenAlex 无转义语法，
+实际只能剔除，并把剔除动作记进 `native_query` 让它可见）。
+剔除会改变查询语义，所以这是一条需要决策的改动，不是纯 bugfix。
+
+## F-13 — AND 连接对整句自然语言查询过严，实测确认（未修）
+
+**现象**：`worklog.md` §3 预告过这条风险，S12 的消融把它变成了实测。
+同一条 17 词问句，`sources: ["arxiv"]`，返回 **0 条**。
+
+**证据**：`runs/judge-ablation/accept` 第一次运行，两条查询的 `returned` 都是 0，
+其中 arXiv 侧无 failure（不是错误，是真的没有结果），OpenAlex 侧是 F-12。
+
+**根因**：F-1 的修法把词间连接改成 AND，一句 17 词的提问因此变成 17 个必须全部
+命中的词项。这不是 F-1 的回归——F-1 修对了它要修的东西（`backlog.md` §1 的
+0/4 → 4/4 用的是词项式查询），但它把"送整句"这条路从"结果很差"变成了"零结果"。
+
+**后果**：
+- agent 路径不受影响：工具描述已经把它引向词项式查询（D-16），实测它送的都是
+  词项组合；
+- **绕过 agent 的路径受影响**：任何把数据集问句直接当 `query` 用的批量评测
+  都会拿到 0 条。J 轴消融因此改用固定的词项式 `searchQuery` 作为夹具
+  （`experiments/judge-ablation/queries.accept.json`），并在记录里同时留下
+  原问句与实际发出的查询。
+
+**补上它需要**：一条对长查询的降级策略。可选项各有代价，需要决策而不是修 bug：
+按词项数阈值自动降级成 OR（引回 F-1 的问题面）、去停用词后再 AND
+（引入一份需要维护的词表，且对非英语查询失效）、或在 Service 侧不做而要求
+调用方送词项（现状，把责任放在工具描述上）。
 
 ## F-11 — OpenAlex 的 ML 预印本引文图很稀疏，backward 扩展基本不可用（未修，是数据现实）
 
@@ -618,7 +695,7 @@ E 轴（引文扩展）在当前实现下没有测量对象。
 
 ---
 
-## 验收缺口 G-1..G-5
+## 验收缺口 G-1..G-10
 
 这一节记的是"**stage 验收通过、但设计要求尚未满足**"的部分。
 
@@ -711,6 +788,118 @@ WIDI revision、profile、模型、extension 版本、生效预算、启动诊�
 
 **补上它需要**：见 `history.md` 的 **U-03**。三条路径互斥，需要用户拍板选一条。
 
+### G-9 — S12 判据 2 的"出现在 $\bar{\tau}_t$ 里"没有经过真实 agent episode（S12）
+
+**判据原文**：`judge_level=l3b` 时 `judgeSupported: true`，实际判别篇数写进
+`SearchState` **并出现在 $\bar{\tau}_t$**。
+
+**已验的**：`SearchState.judge` 在真实运行里带着完整账目
+（`level` / `judged: 30` / `considered: 30` / `rubric_version: r3` /
+`criteria_version` / `model_version`），见 `worklog.md` §8 的 J 轴消融记录。
+extension 侧的解析与 `PublicSearchTrace` 的 `judge` 字段各有单测。
+
+**没验的**：**一次真实 agent episode 里 $\bar{\tau}_t$ 带着判别账目落盘。**
+原因是算力而不是通路：agent 一个 episode 发 19 次 `search_metadata`，
+每次判 30 篇、每篇一次 LLM 往返（实测约 15–18 秒），
+一个 episode 的判别开销就是 **2.5 小时以上**。
+
+**后果**：链路的最后一跳（`SearchState.judge` → 工具 `details` →
+`tool_execution_end` → `PublicSearchTrace`）只有单测作证。三段各自被测过，
+拼起来没被跑过一次。
+
+**补上它需要**：一次开着 `judge.forced_level: l3b`、把
+`judge.max_papers_l3b` 临时降到 3–5 的 episode。降低篇数会让判别质量无意义，
+但这条判据验的是账目是否流到轨迹里，不是判得准不准——所以这是一次
+**便宜且有效**的验证，只是要在记录里写明篇数被降过。
+
+### G-10 — L3a / L3c 未实现，J 轴只有 J0 与 J2 两组（S12）
+
+**设计要求**：`../prototype.md` §4.1 定义三档
+（L3a cross-encoder $N_{sem}=100$ / L3b LLM judge on abstract $N_{judge}=30$ /
+L3c fulltext $N_{full}=8$，P0 默认关闭），§6.5 的 J 轴是 J0–J3 加上 J2'。
+
+**实际实现**：只有 L3b。请求 `l3a` 或 `l3c` 会被如实报告为
+"not implemented in this build"，**不会被静默降级成 l3b**——这一处是对的，
+是 D-09 那个教训的直接应用。
+
+**后果**：
+- **J1（只有 L3a）与 J3（三档全开）没有实现面**，J 轴目前只有 J0 与 J2；
+- `prototype.md` §6 要求的 judge-free 消融**成立**（J0 对 J2 就是它），
+  所以 §5.6 那条硬要求没有被绕过；
+- 但 "L3a 便宜且够用吗" 这个问题无法回答，而它决定默认策略
+  （§4.1 写的是"预算充裕走 L3a + L3b，紧张时只走 L3a"）——
+  这个默认策略当前没有实现依据。
+- **J2'（judge 蒸馏后的 L2 打分器）更远**：它需要 L2 存在，而 L2 属于 G-5。
+
+**补上它需要**：L3a 是一个 cross-encoder 打分器，不是 LLM 调用，
+所以它不在 `judge/` 这一层，而是 G-5 里 "L2 与参数外提" 的邻居。
+L3c 需要全文，`search_fulltext` 已有，但 §4.1 明说 P0 默认关闭。
+**两者都不阻塞 J0/J2 的对照。**
+
+### G-7 — S11 判据 3 的"被 novelty key 挡下"在真实运行里没走到（S11）
+
+**判据原文**：gate 的拒绝记录里能看到检测器重复触发被 **novelty key** 挡下的条目
+（说明检测器接在 gate 之内，没有绕过）。
+
+**实际实现**：括号里那条性质**成立且有充分证据**——一次真实 episode 的拒绝记录是
+`duplicate_action_target` ×1、`unknown_evidence` ×3、`repeated_no_action` ×1。
+其中三条 `unknown_evidence` 尤其有力：Reviewer 引了三个不在轨迹里的 id，全被挡下。
+
+**没走到的是那条具体路径**：Reviewer 重复的那条 `organize_answer` 换了 novelty key
+但动作与 target 相同，于是先撞上 `duplicate_action_target`
+（gate 的检查顺序是 episode 上限 → novelty key → action|target）。
+`duplicate_novelty_key` 有单测（`review.test.ts:98`），但没有真实运行的样本。
+
+**为什么记成缺口而不是"实质等价"**：这两条规则挡的是不同的东西。
+novelty key 挡的是"同一个意思换个说法"，action|target 挡的是"同一个动作对同一个对象"。
+一个换了 novelty key 就能重发的 Reviewer，在 target 不同时能绕过 action|target 那条——
+而这次运行没有覆盖到那种情形。**它是否真的挡得住，目前只有单测作证。**
+
+**补上它需要**：一次 Reviewer 用同一个 novelty key 重发、或 target 不同而语义重复的
+真实运行。可以在下一次 M 轴运行里顺带观察，不需要单独的工作项。
+
+### G-8 — S11 判据 8 的 TUI 交互半边未验（S11）
+
+**判据原文**：TUI 里用户能切到 Reviewer 并直接与它对话，且切过去看到的上下文里
+**没有** Main 的私有推理（沿用 S8 的逐片段查证方法，leaks = 0）。
+
+**已验的一半**：隔离。Reviewer 的输入完全由 `renderTraceForReviewer(trace)` 构造，
+`PublicSearchTrace` 是白名单过滤的产物，且有一条测试往 trace 上塞额外字段并断言
+渲染不出来。运行侧最有力的证据是三条 `unknown_evidence` 拒绝。
+
+**未验的一半**：**切过去对话这个动作本身**。本次推进全程走 RPC，
+无法驱动全屏 TUI，因此 S8 那套"切过去、逐片段 grep、leaks = 0"的过程没有执行。
+D-10 把"用户能直接与 Reviewer 对话"列为常驻化的第二条理由
+（人工 review 是 $NP_0$ 的种子来源），所以这不只是一个演示步骤，
+它是那条决策的作用面。
+
+**补上它需要**：一次交互式 `npm run widi:scholar`，`SCHOLAR_REVIEWER=1`，
+在 agent strip 里切到 reviewer、问它一个问题、并按 S8 的方法抽片段查证。
+**需要人在 TUI 前**，无法自动化。
+
+### G-6 — S10 判据 4 的后半只由单测证明，没有活的 Reviewer 读过池子（S10）
+
+**设计要求**：`plan.md` §3.5 第三条——答案池的价值之一是让 Reviewer
+**在 episode 中途**读出覆盖缺口（"池中八篇全是 superpixel segmentation、
+一篇 active learning 都没有"）。判据 4 的后半写的是
+"Reviewer 的上下文能读到池子当前内容"。
+
+**实际实现**：`renderTraceForReviewer` 会渲染 pool 段（committed / withdrawn /
+note / 每条的 `why`），空池渲染成 `Answer pool: EMPTY`；两条单测覆盖
+（`review.test.ts`）。`PublicSearchTrace.answerPool` 在真实运行里确实带着 14 条
+落进了 `search-to8d.json`。
+
+**没有验的**：**一个真的 Reviewer 读了它**。Reviewer 仍挂在 `agent_idle` 上、
+`SCHOLAR_REVIEWER` 默认关闭，而且即使打开也只在 episode 结束后介入（G-1）。
+所以"池子对 Reviewer 有作用面"这件事，目前只有渲染函数层面的证据。
+
+**为什么不在 S10 里补**：补它就是把 Reviewer 的触发时机改掉，那是 S11 的全部内容
+（`plan.md` §4，`../reviewer-design.md` §5.3）。在 S10 里顺手改会把两个 stage
+混进一个 commit，也会让 S11 的判据 2 失去对照。
+
+**补上它需要**：S11 的判据 2 与判据 4 一起跑一次真实检索，确认 Reviewer 在
+**池子被写入之后**收到的轨迹里含 pool 段。这是 S11 的验收，不需要新增工作项。
+
 ### G-5 — 排序栈只有 L1 真实存在，判别器完全没有（S7）
 
 **设计要求**：`../prototype.md` 的 L0–L3 排序栈——L0 资格过滤、L1 RRF 候选控制、
@@ -769,7 +958,18 @@ L2 与参数外提尚无 stage。
 | 随时，很小 | **F-9**：LLM provider 改用 `Settings` 字段而非 `os.environ` | 潜伏缺陷，现在不咬人；改动照 `config.py:136-139` 的样板抄 |
 | **S10 之后** | **F-4**：`call_ledger` 接上 `cost_model` 与上游 `x-ratelimit-*` 头 | 它激活 `../design.md` §5.2 的"预算接近上限"checkpoint，也就是 S11 的 R7 检测器的数据源。放在 S10 之后是因为它要用到 S10 建立的评测回路来验证记账是否准 |
 | **S12 之前** | **F-11 的应对**：把 `graph_references` 的能力声明改成实测结果，E 轴默认改 forward | 它推翻的是一条 `CAP` 断言，不改会让 E 轴实验从错误的默认值出发 |
-| 无排期 | **F-5 的 `np-agent.md` 时间窗条目**、**F-6 / G-5 的参数外提** | 前者并进 S11 的 $NP_0$ 重写顺手做；后者需要单独的 stage |
+| ~~无排期~~ **已做** | **F-5 的 `np-agent.md` 时间窗条目** | 并进 S11 的 $NP_0$ 重写：A 组的 `carry-the-date-boundary`（`[NP v2]`） |
+| 无排期 | **F-6 / G-5 的参数外提** | 需要单独的 stage |
+
+四段路线走完之后新增的条目，以及它们该插在哪里：
+
+| 何时做 | 做什么 | 为什么是这个位置 |
+| --- | --- | --- |
+| **下一件** | **F-4**：`call_ledger` 接上 `cost_model` 与上游 `x-ratelimit-*` 头 | 它是 R7 检测器唯一的数据源。R7 现在拿 `budget.totalCalls` 对一个配置里的软上限比，那是调用次数不是预算——真正的"预算接近上限"checkpoint 仍然没有数据可触发 |
+| **任何批量评测之前** | **F-12 / F-13**：查询归一（`?` 与 `*`）与长句降级策略 | 两者都只在绕过 agent 的路径上发作，而那正是批量评测的路径。J 轴消融已经用夹具查询绕过它们一次（D-26），但绕过不是修好 |
+| **J 轴报结论之前** | **G-10**：至少让 J1 有实现面（L3a） | 现在 J 轴只有 J0 与 J2。judge-free 消融成立（§5.6 的硬要求没被绕过），但"L3a 便宜且够用吗"这个决定默认策略的问题无法回答 |
+| **M 轴开跑之前** | **G-8**：一次交互式 TUI 的 Reviewer 对话查证 | D-10 把"用户能直接与 Reviewer 对话"列为常驻化的第二条理由，而人工 review 是 $NP_0$ 的种子来源。**需要人在 TUI 前**，无法自动化 |
+| 便宜，随时 | **G-9**：把 `judge.max_papers_l3b` 临时降到 3–5 跑一个 episode | 验的是判别账目流到 $\bar{\tau}_t$，不是判得准不准，所以降篇数不影响这条判据 |
 
 排序的依据是"单位改动量的信息增益"，不是严重程度——F-1 排第一不是因为它最严重，
 而是因为它改动最小、收益最大，且 §1 已经给出可直接用作回归断言的期望值。

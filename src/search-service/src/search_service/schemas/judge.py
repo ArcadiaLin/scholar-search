@@ -66,3 +66,38 @@ class JudgeResponse(BaseModel):
     raw_request: dict[str, Any] | None = Field(
         default=None, description="Request body sent to the provider, for debugging."
     )
+
+
+class RelevanceJudgeRequest(BaseModel):
+    """Judge one paper against one query's derived criteria."""
+
+    query: str = Field(min_length=1, description="The query the paper is judged against.")
+    paper: dict[str, Any] = Field(description="The paper, in the unified `Paper` wire shape.")
+    level: Literal["auto", "l3a", "l3b", "l3c"] = Field(
+        default="l3b", description="Judging tier. An unimplemented tier is reported, not approximated."
+    )
+
+
+class RelevanceJudgeResponse(BaseModel):
+    """One graded verdict, plus the criteria it was graded against.
+
+    The three version fields are not decoration: a verdict whose rubric, criteria
+    and model cannot be named is not a measurement, and `docs/prototype.md` §4.2
+    requires all three on the output.
+    """
+
+    paper_id: str = Field(description="Canonical id of the paper judged.")
+    criteria: dict[str, dict[str, str]] = Field(
+        default_factory=dict, description="Per-criterion relevance label and verbatim snippet."
+    )
+    criteria_definition: list[dict[str, Any]] = Field(
+        default_factory=list, description="The derived criteria and their normalized weights."
+    )
+    summary: str = Field(default="", description="One sentence on what the paper contributes.")
+    score: float = Field(description="Weighted composite of the per-criterion grades.")
+    tier: str = Field(description="Composite discretised back into one of the four tiers.")
+    rubric_version: str = Field(description="Rubric behind this verdict.")
+    criteria_version: str = Field(description="Criteria behind this verdict, content-addressed.")
+    model_version: str = Field(description="Model that produced this verdict.")
+    carrier_version: str = Field(description="Declared version of the NP^judge carrier.")
+    cached: bool = Field(default=False, description="Whether this verdict came from the content-addressed cache.")

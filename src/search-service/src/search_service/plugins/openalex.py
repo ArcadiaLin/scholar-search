@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from search_service.exceptions import SourceError
+from search_service.identifiers import ACCEPTED_ID_FORMS, openalex_address, parse_identifier
 from search_service.models import SearchResultItem
 from search_service.providers.base import SearchProvider
 from search_service.schemas import ProviderCapabilities
@@ -233,18 +234,18 @@ class OpenAlexClient:
 
         raise SourceError("openalex", "unknown", f"OpenAlex request failed after retries: {last_exception}")
 
-    async def search(
+    def build_base_params(
         self,
         query: str,
-        top_k: int,
-        *,
         end_date: str | None = None,
         native_params: dict[str, Any] | None = None,
-    ) -> list[SearchResultItem]:
-        """Search works using OpenAlex full-text search."""
-        candidates: list[SearchResultItem] = []
-        page = 1
+    ) -> dict[str, Any]:
+        """The query-shaping parameters a unified search sends, without paging.
 
+        Public and pure for the same reason as arXiv's ``build_params``: the
+        trajectory records the query that was issued, and that has to come from
+        the code that issues it.
+        """
         # Base params from unified request; native_params takes precedence.
         base_params: dict[str, Any] = {"search": query}
         if native_params:
@@ -258,6 +259,20 @@ class OpenAlexClient:
                 base_params["filter"] = f"{existing_filter},{date_filter}"
             else:
                 base_params["filter"] = date_filter
+        return base_params
+
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> list[SearchResultItem]:
+        """Search works using OpenAlex full-text search."""
+        candidates: list[SearchResultItem] = []
+        page = 1
+        base_params = self.build_base_params(query, end_date, native_params)
 
         while len(candidates) < top_k:
             params: dict[str, Any] = {
@@ -318,12 +333,48 @@ class OpenAlexClient:
         """
         return await self._request("GET", endpoint, params)
 
+    def _work_path(self, work_id: str) -> str:
+        """The ``works/`` path that addresses this identifier.
+
+        Every id that reaches OpenAlex goes through the shared parser, so a DOI
+        URL - which is the ``paper_id`` shape ``/search`` hands out for an
+        OpenAlex hit - addresses the same work here as it does in ``/paper``
+        (``backlog.md`` F-10).
+        """
+        identifier = parse_identifier(work_id)
+        if identifier is None:
+            raise SourceError(
+                "openalex",
+                "bad_id",
+                f"'{work_id}' is not a recognised identifier. Accepted forms: {ACCEPTED_ID_FORMS}.",
+            )
+        return f"works/{openalex_address(identifier)}"
+
+    async def resolve_work_id(self, work_id: str) -> str:
+        """Return the short OpenAlex id for an identifier in any accepted form.
+
+        Filters such as ``cites:`` only accept OpenAlex's own ids, so a DOI or an
+        arXiv id has to be resolved first. An id already in OpenAlex's space
+        costs no call.
+        """
+        identifier = parse_identifier(work_id)
+        if identifier is not None and identifier.kind == "openalex":
+            return identifier.value
+        work = await self.lookup_work(work_id)
+        resolved = _extract_openalex_id((work or {}).get("id"))
+        if not resolved:
+            raise SourceError(
+                "openalex",
+                "bad_id",
+                f"'{work_id}' does not resolve to an OpenAlex work, so citation filters cannot address it.",
+            )
+        return resolved
+
     async def lookup_work(self, work_id: str) -> dict[str, Any] | None:
-        """Fetch a single work by OpenAlex ID (short or full URI)."""
-        short_id = _extract_openalex_id(work_id) or work_id
+        """Fetch a single work by any accepted identifier form."""
         payload = await self._request(
             "GET",
-            f"works/{short_id}",
+            self._work_path(work_id),
             {"select": _WORK_SELECT},
         )
         return payload if isinstance(payload, dict) else None
@@ -333,8 +384,7 @@ class OpenAlexClient:
 
         Returns the referenced work objects, capped at ``limit``.
         """
-        short_id = _extract_openalex_id(work_id) or work_id
-        work = await self.lookup_work(short_id)
+        work = await self.lookup_work(work_id)
         if not work:
             return []
         refs = work.get("referenced_works") or []
@@ -343,9 +393,8 @@ class OpenAlexClient:
 
         results: list[dict[str, Any]] = []
         for ref_id in refs[:limit]:
-            ref_short = _extract_openalex_id(ref_id) or ref_id
             try:
-                ref = await self.lookup_work(ref_short)
+                ref = await self.lookup_work(ref_id)
             except SourceError:
                 continue
             if ref:
@@ -357,7 +406,7 @@ class OpenAlexClient:
 
         Uses OpenAlex's ``filter=cites:<id>`` mechanism.
         """
-        short_id = _extract_openalex_id(work_id) or work_id
+        short_id = await self.resolve_work_id(work_id)
         payload = await self._request(
             "GET",
             "works",
@@ -409,6 +458,16 @@ class OpenAlexPlugin(SearchProvider):
             field_map=self.config.get("field_map", {}),
             reliability=self.config.get("reliability", {}),
         )
+
+    def native_query_for(
+        self,
+        query: str,
+        *,
+        end_date: str | None = None,
+        native_params: dict[str, Any] | None = None,
+    ) -> str | None:
+        params = self._client.build_base_params(query, end_date, native_params)
+        return "&".join(f"{key}={value}" for key, value in sorted(params.items()))
 
     async def search(
         self,

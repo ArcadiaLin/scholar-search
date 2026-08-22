@@ -191,6 +191,311 @@ Python 里镜像一份它的 schema，于是 Service 被绑死在 WIDI 的事件
 
 ---
 
+## 1.5 实施期定下的决策（前置修复 / S10 / S11）
+
+这些是**路线没规定、实施中做出**的选择，全部影响实验对照，因此从
+`worklog.md` 提升到这里。现场记录（含没影响对照的小选择）仍在 `worklog.md` §2。
+
+### D-16 — arXiv 查询的词间语义定为 AND，工具描述同步改写
+
+**决定**：`plugins/arxiv.py` 的 `build_search_query()` 用 ` AND ` 连接词项；
+引号内保持短语；已带 arXiv 字段前缀（`ti:`/`cat:`/…）或裸布尔算子的词项原样透出；
+无引号词项去掉首尾句读。同时把 `search_metadata` 的 `query` 描述从
+"自然语言陈述"改成"词项按 AND 组合，送概念不要送句子"。
+
+**理由**：AND 本身是 `backlog.md` F-1 指定的修法，不需要重新论证。**需要论证的是
+第二半**：改成 AND 之后，"请给出自然语言陈述"这条描述会把 agent 直接引向零召回——
+一句 17 词的提问会变成 17 个 AND 词项。两者不能并存，留着旧描述等于修了一半。
+
+**代价**：$T^M$ 的工具描述变了，agent 写查询的方式随之变化，
+**跨这条线的检索行为数字不可比**。这与 D-08、D-17 合成同一条对照线
+（`EXTENSION_VERSION` 1 → 2）。
+
+**被否决的替代**：
+- **停用词表 / 词项数上限 / 零命中时自动降级成 OR**：都是新的检索设计，不在计划里，
+  而且会把"召回为什么低"的归因从一处变成三处。记进 `worklog.md` §3 作为观察到的风险。
+- **保留旧描述，靠 agent 自己适应**：实测过一次它不会——`../reviewer-design.md` §2.2
+  的负结果正是"声称与执行脱节"。
+
+### D-17 — 轨迹与失败分类的三处格式扩展，以及 `EXTENSION_VERSION` 1 → 2 这条对照线
+
+**决定**：三个新增字段，一次版本切分。
+
+| 新增 | 在哪 | 为什么必须是新增字段而不是改写现有的 |
+| --- | --- | --- |
+| `native_query` | `SearchState.issued_queries[]` | `query` 是 agent 的措辞，`native_query` 是 provider 收到的串。两者都要留：F-1 藏了这么久，正因为轨迹里只有前者 |
+| `bad_id` | `Failure.error_type` 的取值 | "输入写错了"必须能与"这个方向没有边"区分开，这是 F-10 的核心 |
+| `answerPool` | `PublicSearchTrace` | 池子是**经工具调用**写的，内容本来就在 args 里；这只是把它投影成可读形状 |
+
+`EXTENSION_VERSION` 从 `1` 变成 `2`，分界点是前置修复 commit `8bc69de`
+与 S10 commit `599f351`。
+
+**理由**：`answerPool` 这一条要说清楚，否则会被误读成白名单扩宽。
+按 `../reviewer-design.md` §5.2c 的判据——**信息来自过滤器的哪一侧**——
+工具入参属于公开侧，所以池子的内容本来就可以给 Reviewer 看；
+加字段只是省掉了让 Reviewer 从 args 里自己拼的一步，
+把"覆盖不足"从需要推断变成可以读出。
+
+**代价**：S9 及之前的 `.json` 轨迹没有这三项，读旧轨迹的代码要容忍缺失。
+更要紧的是行为不可比，理由与 D-08 相同（工具集从 9 变 10）。已记进 `history.md`。
+
+**被否决的替代**：把 `native_query` 覆盖进 `query`。省一个字段，
+但从此无法回答"agent 写的和发出去的是不是同一个东西"，
+而这正是 F-1 需要被看见的那个差。
+
+### D-18 — id 解析集中到 `identifiers.py`，`canonical_key` 先归一再取键
+
+**决定**：新增 `search_service/identifiers.py` 作为 id 解析的唯一处，
+`api/paper.py` 的三条本地正则改成调它；`canonical_key` 沿用 D-13 的优先级
+（doi > arxiv_id > openalex_id > paper_id），但**选中的那个 id 先过
+`parse_identifier`**，输出带空间前缀的键（`arxiv:X` / `doi:x` / `openalex:W`）。
+OpenAlex 寻址一律经 `openalex_address()`：DOI → `doi:<doi>`，
+arXiv id → 其注册 DOI `doi:10.48550/arXiv.<id>`。
+
+**理由**：两件事各有必要。
+
+**集中解析**：F-10 的根因不是 expand 写错了，是三个端点各有一套 id 观念——
+`/search` 发出 DOI URL，`/paper` 接受它，`/expand` 拒绝它。只修 expand 会留下同样的坑。
+
+**先归一再取键**：不归一的话，OpenAlex 记的 `10.48550/arxiv.1810.09726` 与 arXiv 记的
+`1810.09726` 是两篇论文。`plan.md` §3.7 判据 2 要求"同一篇经两个 id 各加一次，
+池中只有一条"，而这条判据在不归一的实现上**不成立**。
+寻址形式则是实测定的：2026-08-21 直连测出 `works/doi:...` 与 `works/W...`
+是 $0 的单篇查找，`works/https://doi.org/...` 与 `works/arxiv:...` 不是。
+
+**代价**：`_deduplicate` 的分组结果变了，`recalled/returned` 的比值随之变化；
+`/expand/citations` 与 `/paper` 接受的 id 集合也变了（多接受 `openalex:` 前缀，
+因为 `canonical_key` 会发出这种形式并被当作下一跳种子）。
+
+**仍然合不上的一种情况**（写下来免得以为已经解决）：一条记录只有出版商 DOI、
+另一条只有 arXiv id，两者之间没有任何别名相连时，任何键函数都看不出它们是一篇。
+要合上它需要一次跨源查询把别名补齐，那是 Evidence Store（G-2）那一侧的事。
+
+**被否决的替代**：在 extension 里复制一份归一规则。省一次 API 调用（D-13 已经接受了
+这次调用），但把领域算法复制成两份，且两份会各自漂移。
+
+### D-19 — 打分只读答案池，`k` 按提交顺序截断，`RUNNER_VERSION` 随记录格式升到 2
+
+**决定**：`score.mjs` 只读 `<agentId>.answer.json`，不读 agent 的散文；
+`--k` 按 agent 写入池子的顺序截断；`run.json` 每条结果记 `agentId` 与 `gold`，
+run 级记 `traceDir`；`RUNNER_VERSION` 1 → 2。
+
+**理由**：只读池子是 D-08 已经论证过的（从散文正则抠 id 会静默劣化）。
+这里要论证的是 **`k` 的语义**：池子是 agent 自己建的有序列表，
+按它自己的顺序截断打的就是它给出的排名；换成任何别的顺序（比如按年份、按 canonical id），
+打的都是一个没人产出过的排名。
+
+**代价**：`k` 的语义与"检索排名的 top-k"不是一回事，跨系统比较时要说明。
+`RUNNER_VERSION` 升到 2 意味着版本 1 的记录没有 `agentId`，
+`score.mjs` 必须被显式告知 `--trace-dir` 才能打它。
+
+**被否决的替代**：
+- **不升 `RUNNER_VERSION`**：记录格式变了却不升版本，正是 D-09 记下的那个模式——
+  能力缺口以"看起来完成了"的形式沉淀。
+- **让打分器同时读散文作为兜底**：那等于把静默劣化的通道又接回来。
+
+### D-20 — Reviewer 的附着有两个入口，都走同一个同步声明
+
+**决定**：`ensureReviewer(subjectId, context)` 同时挂在两处——
+`agent_spawned`（条件 `event.profile.id === "search"`）与该 agent 的第一个
+`tool_execution_end`（条件 `api.profileId === "search"`）。两处都先做一次**同步**的
+`reviewerClaimed.add()` 声明，然后才 await。
+
+**理由**：`../reviewer-design.md` §5.2b 只写了 `agent_spawned` 这一处，
+理由是它无状态、与事件顺序无关。那个理由成立，但它假设了一件没被验证的事：
+**这个事件会到达一个能对它动手的 activation**。spawn 类事件"向同一 agent tree 广播"，
+而 extension 是**按 agent** activate 的——如果 search agent 是 tree 的根、
+且它的 `agent_spawned` 早于自身 extension 的 activate，就没有任何 observer 收到它。
+第二个入口保证"总会附上"，代价只是可能晚一个工具调用。
+
+同步声明是另一半：广播意味着同一个 spawn 可能同时到达两个 activation，
+两者都会通过一个"await 之后才填的 map"上的 `has()` 检查。
+`plan.md` §4.2 判据 5 要求"一个 episode 里 Reviewer 恰好一个"，
+这条判据靠的就是这个同步声明。
+
+**代价**：多一条代码路径。且当 `agent_spawned` 由**别的** agent 的 activation 收到时，
+Reviewer 会成为那个 agent 的子 agent 而不是 search 的——
+§5.2b 第一条机械约束说的父子关系只是会话目录嵌套，不影响 $C^R_t \neq C^M_t$，
+所以这不破坏任何设计性质，但 agent strip 里的树形会与预期不同。
+
+**被否决的替代**：只挂 `agent_spawned`。更贴合原设计，但"Reviewer 根本没起来"
+和"Reviewer 起来了但没话说"在产物上无法区分——正是本 stage 要消除的那类歧义。
+
+### D-21 — 投递给 Reviewer 的轨迹按 subject 串行化，超出的触发记进 review journal
+
+**决定**：extension → Reviewer 方向（`prompt`）按 subject 串成一条链，
+最多一个在飞、一个排队；第三个触发被丢弃，并写进 `<agentId>.review.json` 的
+`journal` 数组，带触发源、当时已触发的检测器、以及"为什么被丢"。
+每条 journal 记录另带 `atCall` / `atSearch`。
+
+**理由**：`prompt` 对忙碌目标是拒绝而不是排队（§5.2b 第二条），
+而 `../reviewer-design.md` §8 第一条要求"必须显式排队或显式记录跳过"。
+两者都做了：能排的排，排不下的记。
+
+`atCall` / `atSearch` 是**额外加的**，因为 `plan.md` §4.2 判据 2 问的是
+"建议的投递时刻是否早于最后一次 `search_metadata`"，而墙钟时间回答不了这个问题——
+调用序列里的位置才能。没有这两个字段，判据 2 只能靠人读日志估。
+
+**代价**：`review.json` 的格式变了（多了 `journal` 与 `delivered`，
+`reviewerReply` 并进 journal 的 `note`）。S8 存下来的 review 文件读不出新字段。
+
+**被否决的替代**：
+- **把跳过记进 gate 的 `refusals()`**（§8 的字面说法）。gate 的拒绝是关于**建议**的
+  （动作不在白名单、证据不在轨迹、重复），而这里被拒的是一次**投递**。
+  混在一条列表里会让"Reviewer 说了不该说的"和"Reviewer 没机会说"看起来是同一件事。
+- **不排队，只记跳过**。实现更简单，但 Main 连续两次写池子是常见情况
+  （S10 实测那次是一次批量写 14 篇），第二次触发几乎必然被丢。
+
+### D-22 — `observable:` 元数据写在注入文件里，agent 会看到
+
+**决定**：`np-agent.md` 的 A 组条目各带一行 `<!-- observable: ... -->`，
+指明它断言 $\bar{\tau}_t$ 的哪个字段。这个文件整体注入系统提示词，
+所以 **agent 看得到这些判据**。
+
+**理由**：`../reviewer-design.md` §4 要求绑定关系写在条目的元数据里。
+在这个仓库里"元数据"没有不被注入的位置——HTML 注释在 markdown 里同样是可见文本
+（`preference/README.md` 对 `np-version` 就是这么说的）。于是只有两个选项：
+写在别处（另建一个不注入的映射文件），或者写在条目里并接受 agent 看得到。
+
+选后者，理由是**在这里 Goodhart 就是执行**。一条条目值得留在 A 组的判据是
+"关掉它轨迹会不同"；agent 因为知道 `facet_probe` 会被检查而去调用它，
+正是这条条目要求的行为。这与"为了指标好看而伪造行为"不是一回事——
+判据本身就是行为。
+
+**代价**：这条推理**只对形如"调用某个工具"的判据成立**。将来若出现一条判据
+是"某个数值应当更高"（比如召回率、方向覆盖数），同样的写法就会变成真的 Goodhart。
+到那时必须把判据移出注入文件，不能因为"上次也是这么写的"就照抄。
+
+**被否决的替代**：另建一份 `observable-map.md` 不注入。绑定关系与条目分家，
+两边会漂移，而条目的 `id` 是唯一的连接键——这正是 `mapping.md` 反复警告的那种通路。
+
+### D-23 — $NP$ 的版本 commit 与"一个 stage 一个 commit"冲突时，$NP$ 单独成 commit
+
+**决定**：S11 分两个 commit：一个是代码与配置，一个是
+`[NP v2]` 的 `np-agent.md` 重写（含 `preference/README.md` 与 lint）。
+
+**理由**：两条既有约定直接冲突。`preference/README.md` 要求
+"每次改动条目就 +1，并且**单独一个 commit**，message 首行包含 `[NP v<k>]`；
+一次 commit 只推进一个版本"；`develop/README.md` §7 要求
+"一个 stage 做完、验收通过、提交"。前者服务的是偏好载体的可回放性
+（`git log --grep='\[NP v3\]'` 必须能定位到一个版本），后者服务的是不把两个 stage 混在一起。
+
+选让 $NP$ 单独成 commit，因为"一个 stage 一个 commit"防的是**跨 stage 混合**，
+而这两个 commit 都属于 S11；而版本 commit 的可回放性一旦破坏就无法补救。
+
+**代价**：进度表里 S11 对应两个 hash。
+
+**被否决的替代**：把 $NP$ 改动并进 S11 的主 commit，message 里带 `[NP v2]`。
+那样 `git show <commit>:np-agent.md` 仍然可读，但那个 commit 同时含几十个其他文件，
+"第 2 版和第 3 版差在哪"这个 `git diff` 会混进无关改动。
+
+**追加（S12）**：一个载体的**第 1 版**是例外，可以与代码同一个 commit。
+两条理由：它没有前一版可 diff，本条决策要保住的性质在 v1 上是空的；
+而且新载体通常与读它的代码同时才有意义——`np-judge.md` 缺失时 Service 拒绝判别，
+所以拆开会留下一个不能工作的中间 commit。从 v2 起恢复本条决策。
+
+### D-24 — $NP^{judge}$ 的载体放 `preference/`，由 Service 按 `config.yaml` 的指针读取
+
+**决定**：`widis/.widi-scholar/preference/np-judge.md` 是 $NP_k^{judge}$ 的载体；
+`config.yaml` 的 `judge.carrier` 指向它（相对 config 文件解析）；
+Service 每次请求读取它，把内容哈希进 `criteria_version`。
+
+**理由**：`plan.md` §5.4 要求"`config.yaml` 增加判别准则的注入位
+（$NP_k^{judge}$ 经 `Configure` 进 $\theta^S_k$）"，但没说准则文本本身放哪。
+两个选项：
+
+| 选项 | 代价 |
+| --- | --- |
+| 准则文本直接写进 `config.yaml` | $NP_k$ 与 $HP_k$ 混在一个文件里，而它们的更新节奏和作者不同；且 yaml 里的多段中文散文没法逐条 diff |
+| 载体在 `preference/`，config 里只放指针 | Service 读一个 `widis/` 下的文件，跨了目录 |
+
+选后者。跨目录这件事看起来别扭，但它**正是 `Configure` 这条边的形状**：
+$NP_k$ 是版本化的偏好载体（和 `np-agent.md` 同族，同一套 git 回放约定），
+$\theta^S_k$ 是 Service 的生效配置，而 config 里的那个指针就是这条边。
+把准则塞进 `config.yaml` 反而抹掉了这条边——那时 $NP^{judge}$ 与 $HP$ 就是同一个东西。
+
+**`criteria_version` 由内容哈希派生，不手写。** `prototype.md` §4.2 要求
+"准则文本与权重随 `criteria_version` 冻结，改准则等于换评测口径"。
+手写的版本号是会被忘记 bump 的版本号；内容寻址让它自动成立，
+也让缓存不可能过期。实测：给载体加一条条目，`criteria_version` 从
+`cq_24947a56...` 变成 `cq_6869a0b4...`，派生出的准则从 4 条变成 2 条，
+同一篇论文的分数从 0.4444 变成 0.4000。
+
+**代价**：Service 依赖一个 `widis/` 下的文件存在。缺失时**不判**并如实上报，
+而不是无准则地判——无准则判出来的数字，其测量仪器是未知的。
+
+**被否决的替代**：让 extension 把准则随工具入参传给 Service。
+那会把准则搬进 agent 的上下文，于是 Main 能看见（甚至影响）判别准则——
+$NP^{agent}$ 与 $NP^{judge}$ 就不再是两个独立的偏好对象了。
+
+### D-25 — `judge_level` 由调用方决定，但 `config.yaml` 可以钉住它
+
+**决定**：`judge_level` 留在 `search_metadata` 的签名里（`prototype.md` §7.1 的原样），
+同时 `config.yaml` 的 `judge.forced_level` 在非 null 时**覆盖调用方**。
+
+**理由**：两个需求都是真的，而它们方向相反。
+"决定花多少预算做判别是 Agent 的策略"要求参数在签名里；
+J 轴的消融要求在两组之间**把它按住不动**，否则 J0 与 J2 的差异里混进了
+"agent 这两次恰好选了不同档位"。让配置覆盖调用方是唯一能同时满足两者的形状，
+而且响应里同时报 `requested_level` 与 `level`，所以覆盖发生了这件事本身可观测。
+
+**代价**：一个调用方明确要求了 `l3b` 却拿到 `off` 的情况是存在的。
+这不是静默的——`search_state.judge.supported` 与一条 `Failure` 都会说明，
+而工具的输出文本会说"这个排序是召回顺序不是相关性顺序"。
+
+**被否决的替代**：
+- **只靠 agent 选档**：M/J 两轴的介入都变成内生变量，$\Delta$ 无法归因。
+  这与 `mapping.md` §3.4 否决 `ask_reviewer` 是同一条理由。
+- **加一个环境变量**：extension 的配置来源是环境变量，但 Service 的不是；
+  阈值与档位都属于 $HP_k$，散在环境变量里会让 $HP$ 搜索无从下手（同 D-15）。
+
+`forced_level` **不进 `criteria_version` 的指纹**：钉住档位决定的是"这篇有没有被判"，
+不是"怎么判"，所以 J0 与 J2 必须能共用一份缓存和一个 `criteria_version`——
+否则两组的准则版本不同，比较本身就没有意义。
+
+### D-26 — J 轴的消融跑在固定召回集上，查询是夹具
+
+**决定**：`experiments/judge-ablation/` 直接对 Service 发两次同样的检索
+（`judge_level` 分别为 `off` 与 `l3b`），而不是跑两个 agent episode；
+查询文本可以由夹具里的 `searchQuery` 覆盖数据集原问句。
+
+**理由**：这条消融要变的是判别器，其余必须相同。
+经 agent 跑的两次 episode**不会发出同样的查询**——同一个 agent 的两次运行
+查询序列就不同，于是"判别器带来的差异"和"这次恰好搜得更好"混在一起。
+直接打 Service 让候选集成为受控量。
+
+查询覆盖是同一个理由的延伸，而且是被迫的：数据集原问句在当前实现下召回为 0
+（F-12 的 OpenAlex 400 与 F-13 的长句 AND 过严），两组都是 0 分，比较无信息。
+夹具记录里同时留 `query` 与 `search_query`，所以没人会把这些数字读成
+"数据集问句上的成绩"。
+
+**代价**：这**不是端到端数字**。它测的是判别器对排序做了什么，
+不是 agent 带着判别器做得如何。端到端那条路在 `experiments/eval-runner/`。
+两者不能互相替代，也不能混着报。
+
+**被否决的替代**：把 J 轴挂在 eval-runner 上跑 agent。
+更接近最终指标，但把判别器的效应和 agent 的方差绑在一起，
+而以 S10/S11 观察到的方差（同一条查询两次 episode 的召回从 0/4 到 0/4，
+但调用构成完全不同）来看，需要的样本量远超当前预算。
+**这不是放弃端到端，是把两件事分开测。**
+
+### D-27 — `k` 必须小于候选集，否则重排不可能改变 Recall@k
+
+**决定**：J 轴消融的默认 `--k` 取 10，而召回上限跟着 `judge.max_papers_l3b`（30）走。
+
+**理由**：这是一个纯算术事实，但第一次跑的时候撞上了才想起来：
+若 $k \ge$ 候选集大小，两组的 top-$k$ 是同一个集合，Recall@k 必然相同，
+无论判别器怎么排。第一次运行 `--k 20`、候选 20 条，两组自然完全相同——
+那个 0 差异**不是关于判别器的结论**，是设计错误。
+
+**代价**：`k=10` 与端到端评测常用的 `k=20` 不同，两者的数字不能并排读。
+
+**被否决的替代**：加大 `top_k` 让候选更多。可以，但判别篇数受
+`max_papers_l3b` 约束（$N_{judge}=30$），候选超过 30 之后多出来的那些不被判，
+反而把"未判的一批"混进比较里。收紧 `k` 更干净。
+
+---
+
 ## 2. 已执行的决策（S0–S9）
 
 这些决策已经落地在代码里，列在这里主要是为了**不被重新论证或误改**。

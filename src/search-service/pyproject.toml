@@ -30,7 +30,11 @@ members = []
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "-ra"
+# Live-API tests are opt-in: the default suite must not depend on an external
+# service being reachable or on today's quota (`AGENTS.md` §7). Run them with
+# `pytest -m network`.
+addopts = "-ra -m 'not network'"
+markers = ["network: hits a live external API; deselected by default"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 

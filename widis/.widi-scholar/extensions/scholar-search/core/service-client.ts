@@ -79,6 +79,26 @@ export class ServiceRequestError extends Error {
 		const detail = this.bodyJson?.detail;
 		return typeof detail === "string" ? detail : undefined;
 	}
+
+	/**
+	 * The classified per-source failures behind this error, when the service sent
+	 * them. Total failure is when the caller most needs the classification - a
+	 * rate limit, an empty result and a broken source lead to three different next
+	 * moves - so an error that carries them must not be flattened to its `detail`.
+	 */
+	get failures(): readonly FailureRecord[] {
+		return parseFailures(this.bodyJson?.failures);
+	}
+
+	/**
+	 * Sources the service says it did *not* try and that could serve this request.
+	 * Empty means switching source is not an option, which is the half the
+	 * previous unconditional "another source may still be able to answer" got
+	 * wrong (`docs/develop/backlog.md` F-2).
+	 */
+	get alternativeSources(): readonly string[] {
+		return stringList(this.bodyJson?.alternative_sources);
+	}
 }
 
 /** Cost and quota for one provider endpoint. */
@@ -125,6 +145,14 @@ export interface ProviderRecord {
  */
 export interface PaperSummary {
 	readonly paperId: string;
+	/**
+	 * The service's identity for this work, normalized across id spaces.
+	 *
+	 * Carried rather than recomputed: identity is a domain algorithm and it has
+	 * exactly one definition, in the service (`docs/develop/decisions.md` D-13).
+	 * `null` only when the service did not report one.
+	 */
+	readonly canonicalId: string | null;
 	readonly title: string;
 	readonly authors: readonly string[];
 	readonly authorCount: number;
@@ -147,6 +175,13 @@ export interface IssuedQueryRecord {
 	readonly provider: string;
 	readonly mode: string | null;
 	readonly query: string | null;
+	/**
+	 * What the provider was actually sent, when it rewrites the query. `null`
+	 * means it sends the query unchanged. Reported separately from `query` because
+	 * they were not the same string and nothing showed the difference: arXiv turned
+	 * every multi-word query into an OR bag for months (`docs/develop/backlog.md` F-1).
+	 */
+	readonly nativeQuery: string | null;
 	readonly latencyMs: number | null;
 }
 
@@ -157,6 +192,26 @@ export interface FailureRecord {
 	readonly message: string;
 }
 
+/**
+ * What the relevance judge did on this call.
+ *
+ * Reported rather than assumed, and reported even when nothing was judged: "l3b
+ * was requested" and "thirty papers were judged under rubric r3 and criteria
+ * cq_1a2b" are different facts, and the J axis has no observable without the
+ * second (`docs/develop/plan.md` §5.2).
+ */
+export interface JudgeAccountRecord {
+	readonly level: string;
+	readonly requestedLevel: string;
+	readonly supported: boolean;
+	readonly considered: number;
+	readonly judged: number;
+	readonly cacheHits: number;
+	readonly rubricVersion: string | null;
+	readonly criteriaVersion: string | null;
+	readonly modelVersion: string | null;
+}
+
 /** The service's account of what the search did - the Service half of the public trajectory. */
 export interface SearchStateRecord {
 	readonly issuedQueries: readonly IssuedQueryRecord[];
@@ -165,6 +220,7 @@ export interface SearchStateRecord {
 	readonly recalled: number;
 	readonly returned: number;
 	readonly failures: readonly FailureRecord[];
+	readonly judge: JudgeAccountRecord;
 }
 
 export interface SearchResult {
@@ -181,6 +237,13 @@ export interface SearchMetadataInput {
 	readonly sources?: readonly string[];
 	readonly timeoutMs?: number;
 	readonly providerParams?: Readonly<Record<string, Record<string, unknown>>>;
+	/**
+	 * How much relevance judging to buy. Forwarded, not interpreted: deciding the
+	 * budget is the agent's strategy, executing the judging is the service's
+	 * implementation, which is why no model or prompt appears in this shape
+	 * (`docs/prototype.md` §7.1).
+	 */
+	readonly judgeLevel?: string;
 }
 
 export interface PaperLookupResult {
@@ -212,6 +275,7 @@ export interface ServiceClient {
 	rankCandidates(input: RankInput, options?: { signal?: AbortSignal }): Promise<RankResult>;
 	searchFulltext(input: FulltextInput, options?: { signal?: AbortSignal }): Promise<FulltextResult>;
 	getBudget(options?: { signal?: AbortSignal }): Promise<BudgetResult>;
+	getReviewConfig(options?: { signal?: AbortSignal }): Promise<ReviewConfigResult>;
 }
 
 export interface ExpandInput {
@@ -302,6 +366,19 @@ export interface BudgetResult {
 	readonly spent: Readonly<Record<string, number>>;
 	/** `process` until an episode-scoped Evidence Store exists. Reported, not assumed. */
 	readonly scope: string;
+}
+
+/**
+ * The Reviewer's detector thresholds, as the service reports them.
+ *
+ * An open map rather than named fields, matching the endpoint: a detector added
+ * later needs a threshold added, and a closed type here would make that a
+ * coordinated change across two languages. The caller reads the keys it knows.
+ */
+export interface ReviewConfigResult {
+	readonly thresholds: Readonly<Record<string, number>>;
+	/** Where the values came from, and how much a tuned one is worth. Reported, not assumed. */
+	readonly provenance: string;
 }
 
 export interface ServiceClientOptions {
@@ -606,6 +683,7 @@ function parsePaperSummary(value: unknown, url: string, maxAuthors: number, maxA
 	const abstract = nullableString(value.abstract);
 	return {
 		paperId,
+		canonicalId: nullableString(value.canonical_id),
 		title,
 		authors: authors.names,
 		authorCount: authors.total,
@@ -670,7 +748,7 @@ function toWirePaper(candidate: Readonly<Record<string, unknown>>): Record<strin
 		}
 		// Fields the summary derived and the service does not model are dropped
 		// rather than sent: an unknown key would fail validation for the whole record.
-		if (key === "authorCount" || key === "rank" || key === "tier") continue;
+		if (key === "authorCount" || key === "rank" || key === "tier" || key === "canonicalId") continue;
 		mapped[rename[key] ?? key] = value;
 	}
 	// The service requires a `paper_id`. A record that named only a DOI or an
@@ -724,6 +802,7 @@ function parseSearchState(value: unknown): SearchStateRecord {
 				provider: typeof entry.provider === "string" ? entry.provider : "unknown",
 				mode: nullableString(entry.mode),
 				query: nullableString(entry.query),
+				nativeQuery: nullableString(entry.native_query),
 				latencyMs: nullableNumber(entry.latency_ms),
 			});
 		}
@@ -737,6 +816,24 @@ function parseSearchState(value: unknown): SearchStateRecord {
 		recalled: numberOr(counts.recalled, 0),
 		returned: numberOr(counts.returned, 0),
 		failures: parseFailures(source.failures),
+		judge: parseJudgeAccount(source.judge),
+	};
+}
+
+function parseJudgeAccount(value: unknown): JudgeAccountRecord {
+	const source = isRecord(value) ? value : {};
+	return {
+		level: typeof source.level === "string" ? source.level : "off",
+		requestedLevel: typeof source.requested_level === "string" ? source.requested_level : "off",
+		// Defaults to false: a service build that does not report judging has not
+		// done any, and assuming otherwise is how "it looks finished" happens.
+		supported: source.supported === true,
+		considered: numberOr(source.considered, 0),
+		judged: numberOr(source.judged, 0),
+		cacheHits: numberOr(source.cache_hits, 0),
+		rubricVersion: nullableString(source.rubric_version),
+		criteriaVersion: nullableString(source.criteria_version),
+		modelVersion: nullableString(source.model_version),
 	};
 }
 
@@ -769,6 +866,7 @@ export function createServiceClient(options: ServiceClientOptions): ServiceClien
 			if (input.sources && input.sources.length > 0) body.sources = [...input.sources];
 			if (input.timeoutMs !== undefined) body.timeout_ms = input.timeoutMs;
 			if (input.providerParams) body.provider_params = input.providerParams;
+			if (input.judgeLevel !== undefined) body.judge_level = input.judgeLevel;
 
 			const payload = await requestJson(url, {
 				fetch: fetchImpl,
@@ -958,6 +1056,19 @@ export function createServiceClient(options: ServiceClientOptions): ServiceClien
 				// Reported rather than assumed: the service says whether this is an
 				// episode's spend or the process's, and today it is the process's.
 				scope: typeof payload.scope === "string" ? payload.scope : "unknown",
+			};
+		},
+
+		async getReviewConfig(callOptions) {
+			// Same shape as `getBudget`, and for the same reason: these are
+			// service-side configuration, and the extension is not their author
+			// (`docs/develop/decisions.md` D-15). Called once per episode.
+			const url = `${baseUrl}/review-config`;
+			const payload = await requestJson(url, { fetch: fetchImpl, timeoutMs, retries, signal: callOptions?.signal });
+			if (!isRecord(payload)) throw parseError(url, "the response is not an object");
+			return {
+				thresholds: numberMap(payload.thresholds),
+				provenance: typeof payload.provenance === "string" ? payload.provenance : "not stated",
 			};
 		},
 	};

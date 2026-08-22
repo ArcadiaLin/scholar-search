@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
+from search_service.identifiers import parse_identifier, strip_arxiv_version
 from search_service.models import SearchResultItem
 
 
@@ -128,6 +129,16 @@ class Paper(BaseModel):
         default=None,
         description="Raw source response retained for debugging and audit.")
 
+    @computed_field(
+        description=(
+            "Identity of the work, normalized across id spaces. Derived, never supplied: "
+            "a caller that could set it could split one paper into two."
+        )
+    )
+    @property
+    def canonical_id(self) -> str:
+        return canonical_key(self)
+
 
 class RankedPaper(Paper):
     """A ``Paper`` after ranking, with score and tier annotations."""
@@ -136,6 +147,41 @@ class RankedPaper(Paper):
     rank: int = Field(ge=1, description="1-based position in the ranked list.")
     tier: Literal["highly_relevant", "partially_relevant", "not_relevant"] = Field(
         description="Relevance tier assigned by the ranker.")
+
+
+def canonical_key(paper: Paper) -> str:
+    """One key per work, whichever id space the record happens to carry.
+
+    This is the only definition of "the same paper" in the service. It used to be
+    an inline expression inside ``Aggregator._deduplicate``, which meant nothing
+    outside that method could ask the question and nothing could test the answer
+    (``docs/develop/decisions.md`` D-13).
+
+    The precedence is D-13's - DOI, then arXiv id, then OpenAlex id, then whatever
+    ``paper_id`` says - with one addition: the chosen id is put through
+    ``identifiers.parse_identifier`` first. That matters more than it sounds.
+    OpenAlex records an arXiv preprint's DOI as ``10.48550/arxiv.1810.09726``
+    while arXiv reports the same work as ``1810.09726``; unnormalized, those are
+    two papers. Normalized, they are one, and cross-source duplicates of arXiv
+    preprints - which is most of this project's corpus - collapse.
+
+    What it still cannot collapse: a record holding a publisher DOI and a record
+    holding only the arXiv id, with no alias linking them. Neither lookup returns
+    the other's identifier, so no key function can see that they are one work.
+    """
+    for raw in (paper.doi, paper.arxiv_id, paper.openalex_id, paper.paper_id):
+        if not raw:
+            continue
+        identifier = parse_identifier(raw)
+        if identifier is None:
+            return raw
+        if identifier.kind == "arxiv":
+            return f"arxiv:{strip_arxiv_version(identifier.value)}"
+        # DOIs are case-insensitive by specification, and sources disagree on case.
+        if identifier.kind == "doi":
+            return f"doi:{identifier.value.lower()}"
+        return f"{identifier.kind}:{identifier.value}"
+    return paper.paper_id
 
 
 def search_result_item_to_paper(item: SearchResultItem) -> Paper:

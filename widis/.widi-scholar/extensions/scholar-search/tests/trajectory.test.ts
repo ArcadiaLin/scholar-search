@@ -144,6 +144,113 @@ describe("what the trace does record", () => {
 		assert.deepEqual(snapshot.calls[0]?.searchState?.filters.subqueries, ["sub"]);
 	});
 
+	it("carries the judge's account when judging ran", () => {
+		// The J axis has no observable without this: "l3b was requested" and "thirty
+		// papers were judged under rubric r3" support different conclusions
+		// (`docs/develop/plan.md` §5.2, fourth missing piece).
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({
+				judge: {
+					level: "l3b",
+					requestedLevel: "l3b",
+					judged: 28,
+					considered: 30,
+					rubricVersion: "r3",
+					criteriaVersion: "cq_1a2b",
+					modelVersion: "vllm/qwen",
+				},
+			}),
+			isError: false,
+		});
+
+		const judge = trace.snapshot().calls[0]?.searchState?.judge;
+		assert.equal(judge?.judged, 28);
+		assert.equal(judge?.considered, 30);
+		assert.deepEqual([judge?.rubricVersion, judge?.criteriaVersion, judge?.modelVersion], [
+			"r3",
+			"cq_1a2b",
+			"vllm/qwen",
+		]);
+	});
+
+	it("leaves the judge out of the trace when nothing was asked for", () => {
+		// An `off` account on every call would be noise in a trace whose job is to
+		// stay readable.
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({ judge: { level: "off", requestedLevel: "off", judged: 0, considered: 0 } }),
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().calls[0]?.searchState?.judge, undefined);
+	});
+
+	it("carries the answer pool, and the latest state of it wins", () => {
+		// The pool reaches the trace because it is written through a tool call, so
+		// nothing new had to be allowed in - which is the argument `plan.md` §3.5
+		// makes for putting the pool in front of the Reviewer at all.
+		const trace = collector();
+		const emit = (id: string, papers: unknown[], removed: unknown[] = []) => {
+			trace.record({ type: "tool_execution_start", toolCallId: id, toolName: "update_answer_pool", args: {} });
+			trace.record({
+				type: "tool_execution_end",
+				toolCallId: id,
+				toolName: "update_answer_pool",
+				result: { content: [], details: { pool: { papers, removed, note: "n" } } },
+				isError: false,
+			});
+		};
+		emit("p1", [{ canonicalId: "arxiv:1", title: "One", why: "first" }]);
+		emit("p2", [
+			{ canonicalId: "arxiv:1", title: "One", why: "first" },
+			{ canonicalId: "arxiv:2", title: "Two", why: "second" },
+		]);
+
+		const pool = trace.snapshot().answerPool;
+		assert.equal(pool?.committed, 2);
+		assert.equal(pool?.lastChangedBy, "p2");
+		assert.equal(pool?.papers[1]?.why, "second", "the why is the informative part and must survive");
+	});
+
+	it("reports no pool at all when the agent never committed to anything", () => {
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		assert.equal(trace.snapshot().answerPool, null);
+	});
+
+	it("keeps the query as actually issued alongside the query the agent wrote", () => {
+		// A Reviewer that reads only the agent's wording cannot see a provider
+		// rewrite, and the rewrite that mattered turned every query into an OR bag
+		// (`docs/develop/backlog.md` F-1, and B-2 for what that cost the review).
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: { query: "q" } });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: searchResult({
+				issuedQueries: [
+					{ provider: "arxiv", query: "active learning superpixel", nativeQuery: "all:active AND all:superpixel" },
+					{ provider: "openalex", query: "active learning superpixel" },
+				],
+			}),
+			isError: false,
+		});
+
+		const issued = trace.snapshot().calls[0]?.searchState?.issuedQueries;
+		assert.equal(issued?.[0]?.nativeQuery, "all:active AND all:superpixel");
+		assert.equal(issued?.[1]?.nativeQuery, null, "a provider that does not rewrite reports null, not its own guess");
+	});
+
 	it("keeps the service's classified failures even when the call succeeded", () => {
 		// "20 results" and "20 results, and arXiv timed out" are different facts
 		// about coverage, and coverage gaps are the Reviewer's main subject.
@@ -374,9 +481,13 @@ describe("the trace carries citable evidence", () => {
 		assert.equal(trace.snapshot().evidence.length, 3);
 	});
 
-	it("does not turn an abstract into evidence", () => {
-		// Identity and title only. A trace carrying abstracts would grow with the
-		// corpus, which is the thing the summary view exists to prevent.
+	it("carries a bounded opening of the abstract, and the year", () => {
+		// This inverts what this test asserted before S11, and deliberately: it is
+		// the one widening of the allow-list `docs/reviewer-design.md` §5.2c approves.
+		// A Reviewer judging coverage from titles alone cannot tell eight papers on
+		// one topic from eight papers spanning three, and that judgement is the role.
+		// An abstract is a tool *result*, which is the side of the filter §5.2c's
+		// table puts on the public side.
 		const trace = collector();
 		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
 		trace.record({
@@ -384,11 +495,48 @@ describe("the trace carries citable evidence", () => {
 			toolCallId: "c1",
 			toolName: "search_metadata",
 			result: resultWithPapers([
-				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "a very long abstract indeed" },
+				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "region-based active learning", year: 2018 },
 			]),
 			isError: false,
 		});
 
-		assert.ok(!JSON.stringify(trace.snapshot().evidence).includes("very long abstract"));
+		const evidence = trace.snapshot().evidence[0];
+		assert.equal(evidence?.abstractOpening, "region-based active learning");
+		assert.equal(evidence?.year, 2018);
+	});
+
+	it("bounds the abstract it carries", () => {
+		// Bounded is the whole basis on which the widening is acceptable: a trace
+		// carrying whole abstracts would grow with the corpus, which is what the
+		// summary views exist to prevent.
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([
+				{ paperId: "10.1/a", title: "A Paper", sources: [], abstract: "x".repeat(5_000) },
+			]),
+			isError: false,
+		});
+
+		const opening = trace.snapshot().evidence[0]?.abstractOpening ?? "";
+		assert.ok(opening.length < 400, `abstract opening was ${opening.length} chars`);
+		assert.ok(opening.endsWith("..."), "a truncation the reader cannot see is one they will reason past");
+	});
+
+	it("reports a missing abstract as null rather than as an empty string", () => {
+		const trace = collector();
+		trace.record({ type: "tool_execution_start", toolCallId: "c1", toolName: "search_metadata", args: {} });
+		trace.record({
+			type: "tool_execution_end",
+			toolCallId: "c1",
+			toolName: "search_metadata",
+			result: resultWithPapers([{ paperId: "10.1/a", title: "A Paper", sources: [] }]),
+			isError: false,
+		});
+
+		assert.equal(trace.snapshot().evidence[0]?.abstractOpening, null);
 	});
 });

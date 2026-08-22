@@ -30,6 +30,8 @@ export const COLLECTED_EVENTS = ["tool_execution_start", "tool_execution_end"] a
 const DEFAULT_MAX_CALLS = 200;
 const DEFAULT_MAX_ARG_CHARS = 2_000;
 const DEFAULT_MAX_EVIDENCE = 300;
+/** How much of an abstract a Reviewer gets. Enough to place a paper, not enough to grow with the corpus. */
+const DEFAULT_MAX_ABSTRACT_CHARS = 320;
 
 /** One tool call as the Reviewer sees it. */
 export interface TraceCall {
@@ -47,7 +49,17 @@ export interface TraceCall {
 }
 
 export interface TraceSearchState {
-	readonly issuedQueries: readonly { readonly provider: string; readonly query: string | null }[];
+	readonly issuedQueries: readonly {
+		readonly provider: string;
+		readonly query: string | null;
+		/**
+		 * What the provider was actually sent. Required in the trace, not optional:
+		 * a Reviewer reading only the agent's wording cannot see a rewrite, and the
+		 * one rewrite that mattered turned every query into an OR bag
+		 * (`docs/develop/backlog.md` F-1, B-2).
+		 */
+		readonly nativeQuery: string | null;
+	}[];
 	readonly selectedSources: readonly string[];
 	readonly filters: Readonly<Record<string, unknown>>;
 	readonly recalled: number;
@@ -57,6 +69,25 @@ export interface TraceSearchState {
 		readonly errorType: string;
 		readonly message: string;
 	}[];
+	/**
+	 * What the relevance judge did on this call, when it did anything.
+	 *
+	 * In the trace because the J axis has no observable otherwise: the number of
+	 * papers judged, and under which rubric and criteria version, is what
+	 * distinguishes a run that bought judging from one that only asked for it
+	 * (`docs/develop/plan.md` §5.2, fourth missing piece).
+	 */
+	readonly judge:
+		| {
+				readonly level: string;
+				readonly requestedLevel: string;
+				readonly judged: number;
+				readonly considered: number;
+				readonly rubricVersion: string | null;
+				readonly criteriaVersion: string | null;
+				readonly modelVersion: string | null;
+		  }
+		| undefined;
 }
 
 /** What the episode cost, in the only currency this system actually meters: calls. */
@@ -81,6 +112,47 @@ export interface TraceEvidence {
 	readonly sources: readonly string[];
 	/** Which tool call surfaced it, so a claim about coverage can be attributed. */
 	readonly foundBy: string;
+	/**
+	 * An opening slice of the abstract, and the year.
+	 *
+	 * This is the **one** widening of the allow-list that
+	 * `docs/reviewer-design.md` §5.2c approves, and the reason is specific: a
+	 * Reviewer judging coverage from titles alone cannot tell "eight papers about
+	 * superpixel segmentation" from "eight papers spanning three directions", and
+	 * that judgement is the whole point of the role.
+	 *
+	 * It passes §5.2c's test, which is about **which side of the filter a fact
+	 * comes from**, not about how much detail is allowed: an abstract is a tool
+	 * *result*, like the title next to it. What stays unreachable is unchanged -
+	 * anything the Main Agent thought and did not turn into a tool call.
+	 *
+	 * Bounded rather than whole: the trace must not grow with the corpus. Any
+	 * further widening goes back to §5.2c's table, item by item; "we widened it
+	 * last time" is not a reason.
+	 */
+	readonly abstractOpening: string | null;
+	readonly year: number | null;
+}
+
+/**
+ * The answer pool as the trace carries it.
+ *
+ * Not a widening of what the Reviewer may see: the pool is written *through a
+ * tool call*, so its content is already in the trace as that call's arguments.
+ * This is a projection of it into a readable shape, which is what turns
+ * "coverage is insufficient" from something a Reviewer has to infer from a list
+ * of queries into something it can read off (`docs/develop/plan.md` §3.5, third
+ * reason). Eight superpixel papers and no active-learning paper is visible here
+ * and nowhere else.
+ */
+export interface TraceAnswerPool {
+	readonly committed: number;
+	readonly withdrawn: number;
+	readonly note: string;
+	readonly papers: readonly { readonly canonicalId: string; readonly title: string; readonly why: string }[];
+	readonly removed: readonly { readonly canonicalId: string; readonly title: string; readonly reason: string }[];
+	/** The call that last changed it, so a claim about the pool has an address. */
+	readonly lastChangedBy: string | null;
 }
 
 export interface PublicSearchTrace {
@@ -91,6 +163,8 @@ export interface PublicSearchTrace {
 	readonly calls: readonly TraceCall[];
 	/** The evidence ids a Reviewer may cite. Bounded, like everything else here. */
 	readonly evidence: readonly TraceEvidence[];
+	/** What the agent has committed to as its answer. `null` until it commits to anything. */
+	readonly answerPool: TraceAnswerPool | null;
 	readonly budget: TraceBudget;
 	readonly candidateCounts: { readonly recalled: number; readonly returned: number };
 	readonly failures: readonly {
@@ -106,6 +180,7 @@ export interface TraceCollectorOptions {
 	readonly maxCalls?: number;
 	readonly maxArgChars?: number;
 	readonly maxEvidence?: number;
+	readonly maxAbstractChars?: number;
 }
 
 /**
@@ -161,13 +236,14 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 	if (!isRecord(details)) return undefined;
 	const state = details.searchState;
 	if (!isRecord(state)) return undefined;
-	const issued: { provider: string; query: string | null }[] = [];
+	const issued: { provider: string; query: string | null; nativeQuery: string | null }[] = [];
 	if (Array.isArray(state.issuedQueries)) {
 		for (const entry of state.issuedQueries) {
 			if (!isRecord(entry)) continue;
 			issued.push({
 				provider: typeof entry.provider === "string" ? entry.provider : "unknown",
 				query: typeof entry.query === "string" ? entry.query : null,
+				nativeQuery: typeof entry.nativeQuery === "string" ? entry.nativeQuery : null,
 			});
 		}
 	}
@@ -182,6 +258,23 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 			});
 		}
 	}
+	const judgeSource = isRecord(state.judge) ? state.judge : undefined;
+	// Only when judging was asked for at all: an `off` account on every call would
+	// be noise in a trace whose whole job is to stay readable.
+	const judge =
+		judgeSource === undefined ||
+		((judgeSource.requestedLevel ?? "off") === "off" && (judgeSource.judged ?? 0) === 0)
+			? undefined
+			: {
+					level: typeof judgeSource.level === "string" ? judgeSource.level : "off",
+					requestedLevel: typeof judgeSource.requestedLevel === "string" ? judgeSource.requestedLevel : "off",
+					judged: typeof judgeSource.judged === "number" ? judgeSource.judged : 0,
+					considered: typeof judgeSource.considered === "number" ? judgeSource.considered : 0,
+					rubricVersion: typeof judgeSource.rubricVersion === "string" ? judgeSource.rubricVersion : null,
+					criteriaVersion: typeof judgeSource.criteriaVersion === "string" ? judgeSource.criteriaVersion : null,
+					modelVersion: typeof judgeSource.modelVersion === "string" ? judgeSource.modelVersion : null,
+				};
+
 	return {
 		issuedQueries: issued,
 		selectedSources: Array.isArray(state.selectedSources)
@@ -191,6 +284,7 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
 		recalled: typeof state.recalled === "number" ? state.recalled : 0,
 		returned: typeof state.returned === "number" ? state.returned : 0,
 		failures,
+		judge,
 	};
 }
 
@@ -202,7 +296,13 @@ function parseTraceSearchState(details: unknown): TraceSearchState | undefined {
  * same paper should not keep growing the trace, and the *first* call that
  * surfaced a paper is the attribution a coverage claim needs.
  */
-function collectEvidence(details: unknown, toolCallId: string, into: Map<string, TraceEvidence>, max: number): void {
+function collectEvidence(
+	details: unknown,
+	toolCallId: string,
+	into: Map<string, TraceEvidence>,
+	max: number,
+	maxAbstractChars: number,
+): void {
 	if (!isRecord(details)) return;
 	const lists: unknown[] = [details.papers];
 	if (isRecord(details.paper)) lists.push([details.paper]);
@@ -213,6 +313,7 @@ function collectEvidence(details: unknown, toolCallId: string, into: Map<string,
 			if (!isRecord(entry)) continue;
 			const paperId = typeof entry.paperId === "string" ? entry.paperId : undefined;
 			if (paperId === undefined || paperId === "" || into.has(paperId)) continue;
+			const abstract = typeof entry.abstract === "string" ? entry.abstract.trim() : "";
 			into.set(paperId, {
 				paperId,
 				title: typeof entry.title === "string" ? entry.title : "",
@@ -220,9 +321,60 @@ function collectEvidence(details: unknown, toolCallId: string, into: Map<string,
 					? entry.sources.filter((item): item is string => typeof item === "string")
 					: [],
 				foundBy: toolCallId,
+				abstractOpening:
+					abstract === ""
+						? null
+						: abstract.length > maxAbstractChars
+							? `${abstract.slice(0, maxAbstractChars)}...`
+							: abstract,
+				year: typeof entry.year === "number" ? entry.year : null,
 			});
 		}
 	}
+}
+
+/**
+ * Read the answer pool out of an `update_answer_pool` result.
+ *
+ * Bounded like everything else, and the `why` / `reason` texts are kept because
+ * they are the whole informative part: "eight papers" says nothing about coverage,
+ * "eight papers, all of them about superpixel segmentation" says the thing a
+ * Reviewer is for.
+ */
+function parseTraceAnswerPool(details: unknown, toolCallId: string, max: number): TraceAnswerPool | undefined {
+	if (!isRecord(details)) return undefined;
+	const pool = details.pool;
+	if (!isRecord(pool)) return undefined;
+	const papers: { canonicalId: string; title: string; why: string }[] = [];
+	if (Array.isArray(pool.papers)) {
+		for (const entry of pool.papers.slice(0, max)) {
+			if (!isRecord(entry)) continue;
+			papers.push({
+				canonicalId: typeof entry.canonicalId === "string" ? entry.canonicalId : "",
+				title: typeof entry.title === "string" ? entry.title : "",
+				why: typeof entry.why === "string" ? entry.why : "",
+			});
+		}
+	}
+	const removed: { canonicalId: string; title: string; reason: string }[] = [];
+	if (Array.isArray(pool.removed)) {
+		for (const entry of pool.removed.slice(0, max)) {
+			if (!isRecord(entry)) continue;
+			removed.push({
+				canonicalId: typeof entry.canonicalId === "string" ? entry.canonicalId : "",
+				title: typeof entry.title === "string" ? entry.title : "",
+				reason: typeof entry.reason === "string" ? entry.reason : "",
+			});
+		}
+	}
+	return {
+		committed: Array.isArray(pool.papers) ? pool.papers.length : 0,
+		withdrawn: Array.isArray(pool.removed) ? pool.removed.length : 0,
+		note: typeof pool.note === "string" ? pool.note : "",
+		papers,
+		removed,
+		lastChangedBy: toolCallId,
+	};
 }
 
 /** The tool's own error text, which is the actionable diagnostic the tool threw. */
@@ -241,6 +393,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 	const maxCalls = options.maxCalls ?? DEFAULT_MAX_CALLS;
 	const maxArgChars = options.maxArgChars ?? DEFAULT_MAX_ARG_CHARS;
 	const maxEvidence = options.maxEvidence ?? DEFAULT_MAX_EVIDENCE;
+	const maxAbstractChars = options.maxAbstractChars ?? DEFAULT_MAX_ABSTRACT_CHARS;
 
 	// Keyed by tool-call id rather than pushed to an array: `start` and `end` for
 	// one call can arrive in either order, and both contribute to one record.
@@ -248,6 +401,9 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 	const evidence = new Map<string, TraceEvidence>();
 	let arrivals = 0;
 	let dropped = 0;
+	// The latest pool wins, and "latest" is arrival order rather than sequence
+	// number: the pool the tool reported last is the pool that is on disk.
+	let answerPool: TraceAnswerPool | null = null;
 
 	return {
 		record(event: unknown): boolean {
@@ -296,7 +452,9 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				const state = parseTraceSearchState(details);
 				if (state !== undefined) record.searchState = state;
 				if (observed.isError === true) record.errorMessage = errorMessageOf(observed.result);
-				collectEvidence(details, toolCallId, evidence, maxEvidence);
+				collectEvidence(details, toolCallId, evidence, maxEvidence, maxAbstractChars);
+				const pool = parseTraceAnswerPool(details, toolCallId, maxEvidence);
+				if (pool !== undefined) answerPool = pool;
 			}
 			return true;
 		},
@@ -332,6 +490,7 @@ export function createTraceCollector(options: TraceCollectorOptions): TraceColle
 				subqueries,
 				calls,
 				evidence: [...evidence.values()],
+				answerPool,
 				budget: { totalCalls: calls.length, failedCalls, callsByTool, droppedCalls: dropped },
 				candidateCounts: { recalled, returned },
 				failures,
